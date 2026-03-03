@@ -2,21 +2,34 @@
 Entry point for the Single-Asset Backtesting Engine.
 
 Usage:
-  python run.py --download GC ES NQ RTY YM CL SI
+    Download data from IB(TWS):
+        python run.py --download GC ES NQ RTY YM CL SI
 
-  python run.py --backtest --strategy sma
-  python run.py --backtest --strategy mean_rev
-  python run.py --backtest --strategy ict_ob
-  python run.py --backtest --strategy zscore
-  python run.py --backtest --strategy sma_pullback
-  python run.py --backtest --strategy intraday_momentum
+    Statistical Edge:
+        python run.py --backtest --strategy stat_level
+
+    Trend following:
+        python run.py --backtest --strategy sma
+        python run.py --backtest --strategy sma_pullback
+
+    Momentum strategys:
+        python run.py --backtest --strategy intraday_momentum
+
+    Mean reversion strategys:
+        python run.py --backtest --strategy mean_rev
+        python run.py --backtest --strategy zscore
+
+    Popular in media strategys:
+        python run.py --backtest --strategy ict_ob
   
-  python run.py --wfo --strategy sma
-  python run.py --wfo --strategy mean_rev
-  python run.py --wfo --strategy ict_ob
-  python run.py --wfo --strategy zscore
-  python run.py --wfo --strategy sma_pullback
-  python run.py --wfo --strategy intraday_momentum
+    Walk-Forward Validation (WFV):
+        python run.py --wfo --strategy sma
+        python run.py --wfo --strategy mean_rev
+        python run.py --wfo --strategy ict_ob
+        python run.py --wfo --strategy zscore
+        python run.py --wfo --strategy sma_pullback
+        python run.py --wfo --strategy intraday_momentum
+        python run.py --wfo --strategy stat_level
 """
 
 import argparse
@@ -44,10 +57,11 @@ def _load_strategy(name: str):
         "zscore":            "src.strategies.zscore_reversal:ZScoreReversalStrategy",
         "sma_pullback":      "src.strategies.sma_pullback:SmaPullbackStrategy",
         "intraday_momentum": "src.strategies.intraday_momentum:IntradayMomentumStrategy",
+        "stat_level":        "src.strategies.statistical_level:StatisticalLevelStrategy",
     }
 
     if name not in registry:
-        print(f"[Error] Unknown strategy '{name}'. Available: {list(registry)}")
+        print(f"[Error] Unknown strategy '{name}'. Available: {list(registry.keys())}")
         sys.exit(1)
 
     module_path, class_name = registry[name].split(":")
@@ -73,7 +87,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--strategy", type=str, default="sma",
-        help="Strategy to use: 'sma', 'mean_rev', 'ict_ob', 'zscore', 'sma_pullback', or 'intraday_momentum'",
+        help="Strategy to use: 'sma', 'mean_rev', 'ict_ob', 'zscore', 'sma_pullback', 'intraday_momentum', or 'stat_level'",
     )
     args = parser.parse_args()
 

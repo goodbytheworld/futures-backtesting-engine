@@ -28,8 +28,7 @@ from src.strategies.base import BaseStrategy
 @dataclass
 class IntradayMomentumConfig:
     lookback_days: int = 60
-    percentile_threshold: float = 0.6
-    cooldown_bars: int = 0
+    percentile_threshold: float = 0.90
 
 
 class IntradayMomentumStrategy(BaseStrategy):
@@ -74,25 +73,6 @@ class IntradayMomentumStrategy(BaseStrategy):
         
         entries = pd.Series(0, index=close.index)
         entries[is_breakout] = direction[is_breakout].astype(int)
-        
-        # 4.5. Cooldown after profitable trade
-        if cfg.cooldown_bars > 0:
-            entries_arr = entries.to_numpy(copy=True)
-            close_arr = close.to_numpy()
-            n_bars = len(entries_arr)
-            cooldown_until = -1
-            
-            for i in range(n_bars):
-                if i <= cooldown_until:
-                    entries_arr[i] = 0
-                
-                if entries_arr[i] != 0:
-                    if i + 1 < n_bars:
-                        pnl = entries_arr[i] * (close_arr[i+1] - close_arr[i])
-                        if pnl > 0:
-                            cooldown_until = max(cooldown_until, i + cfg.cooldown_bars)
-                            
-            entries = pd.Series(entries_arr, index=close.index)
             
         # The engine naturally executes orders at open[t+1], so there is no
         # look-ahead bias if we pass the signal derived from close[t].
@@ -147,7 +127,6 @@ class IntradayMomentumStrategy(BaseStrategy):
     @classmethod
     def get_search_space(cls) -> Dict[str, Any]:
         return {
-            "intraday_lookback_days": (60, 250, 10),
-            "intraday_percentile_threshold": (0.80, 0.97, 0.01),
-            "intraday_cooldown_bars": (0, 3, 1),
+            "intraday_lookback_days": (40, 140, 10),
+            "intraday_percentile_threshold": (0.85, 0.97, 0.01),
         }

@@ -32,7 +32,7 @@ import pandas as pd
 
 from src.backtest_engine.execution import Order
 from src.strategies.base import BaseStrategy
-from src.strategies.filters import HalfLifeFilter, TrendFilter, VolatilityRegimeFilter
+from src.strategies.filters import HalfLifeFilter, VolatilityRegimeFilter
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -98,14 +98,6 @@ class ZScoreReversalConfig:
 
     # ── Direction ──────────────────────────────────────────────────────────────
     trade_direction: str = "both"
-
-    # ── Trend SMA bias ─────────────────────────────────────────────────────────
-    trend_sma_window: Optional[int] = 3200
-
-    # ── T-stat trend filter ────────────────────────────────────────────────────
-    use_trend_filter: bool = True
-    trend_window: int = 100
-    trend_max_tstat: float = 2.75
 
     # ── Volatility regime filter ───────────────────────────────────────────────
     use_vol_filter: bool = True
@@ -175,13 +167,6 @@ class ZScoreReversalStrategy(BaseStrategy):
         self._atr:    pd.Series = atr
         self._close:  pd.Series = close
 
-        # ── Trend SMA ──────────────────────────────────────────────────────────
-        self._trend_sma: Optional[pd.Series] = None
-        if cfg.trend_sma_window is not None:
-            ts = close.rolling(window=cfg.trend_sma_window, min_periods=cfg.trend_sma_window // 2).mean()
-            self._trend_sma = ts
-            print(f"[Z-SCORE] TrendBias SMA enabled (window={cfg.trend_sma_window})")
-
         # ── Volatility regime filter ───────────────────────────────────────────
         self._vol_filter: Optional[VolatilityRegimeFilter] = None
         if cfg.use_vol_filter:
@@ -193,16 +178,6 @@ class ZScoreReversalStrategy(BaseStrategy):
                 max_pct=cfg.vol_max_pct,
             )
             print(f"[Z-SCORE] VolFilter enabled (window={cfg.vol_regime_window})")
-
-        # ── T-stat trend filter ────────────────────────────────────────────────
-        self._trend_filter: Optional[TrendFilter] = None
-        if cfg.use_trend_filter:
-            self._trend_filter = TrendFilter(
-                price=close,
-                window=cfg.trend_window,
-                max_t_stat=cfg.trend_max_tstat,
-            )
-            print(f"[Z-SCORE] TrendFilter enabled (window={cfg.trend_window}, max_tstat={cfg.trend_max_tstat})")
 
         # ── Half-Life filter ───────────────────────────────────────────────────
         self._hl_filter: Optional[HalfLifeFilter] = None
@@ -239,16 +214,12 @@ class ZScoreReversalStrategy(BaseStrategy):
         Optuna search bounds for Walk-Forward Optimisation.
         """
         return {
-            "zscore_zscore_window":      (20,  200, 10),
-            "zscore_zscore_entry_lvl":   (1.5, 3.5, 0.25),
-            "zscore_atr_sl_mult":        (0.5, 4.0, 0.5),
-            "zscore_atr_tp_mult":        (1.0, 5.0, 0.5),
-            "zscore_trend_sma_window":   (200, 4000, 200),
-            "zscore_trend_max_tstat":    (1.0, 3.0, 0.25),
-            "zscore_vol_min_pct":        (0.10, 0.40, 0.05),
-            "zscore_vol_max_pct":        (0.60, 0.90, 0.05),
-            "zscore_hl_baseline":        (2.0, 10.0, 1.0),
-            "zscore_hl_multiplier":      (1.0, 4.0, 0.5),
+            "zscore_zscore_window":    (30, 120, 10),
+            "zscore_zscore_entry_lvl": (1.25, 2.75, 0.15),
+            "zscore_atr_sl_mult":      (1.0, 3.0, 0.25),
+            "zscore_atr_tp_mult":      (1.5, 4.5, 0.25),
+            "zscore_hl_baseline":      (3.0, 12.0, 1.0),
+            "zscore_vol_max_pct":      (0.75, 0.95, 0.05),
         }
 
     # ── Main event hook ────────────────────────────────────────────────────────
@@ -367,25 +338,10 @@ class ZScoreReversalStrategy(BaseStrategy):
         # ── Volatility regime ─────────────────────────────────────────────────
         if self._vol_filter and not self._vol_filter.is_allowed(timestamp):
             return False
-
-        # ── Trend T-stat ──────────────────────────────────────────────────────
-        if self._trend_filter and not self._trend_filter.is_allowed(timestamp):
-            return False
             
         # ── Half-Life filter ──────────────────────────────────────────────────
         if self._hl_filter and not self._hl_filter.is_allowed(timestamp):
             return False
-
-        # ── Directional bias via long-term SMA ───────────────────────────────
-        if self._trend_sma is not None:
-            sma_val   = self._trend_sma.get(timestamp, np.nan)
-            cur_close = self._close.get(timestamp, np.nan)
-            if not (np.isnan(sma_val) or np.isnan(cur_close)):
-                above_sma = cur_close > sma_val
-                if crossover == 1.0 and not above_sma:
-                    return False   # LONG signal but price below long-term SMA
-                if crossover == -1.0 and above_sma:
-                    return False   # SHORT signal but price above long-term SMA
 
         return True
 

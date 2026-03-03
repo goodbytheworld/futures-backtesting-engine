@@ -51,7 +51,7 @@ import pandas as pd
 
 from src.backtest_engine.execution import Order
 from src.strategies.base import BaseStrategy
-from src.strategies.filters import TrendFilter, VolatilityRegimeFilter
+from src.strategies.filters import VolatilityRegimeFilter
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -115,11 +115,6 @@ class IctOrderBlockConfig:
 
     # ── Trend SMA bias ─────────────────────────────────────────────────────────
     trend_sma_window: Optional[int] = 1000  # None = disabled
-
-    # ── T-stat trend filter ────────────────────────────────────────────────────
-    use_trend_filter: bool = True
-    trend_window: int = 100
-    trend_min_tstat: float = 1.0       # Below this = flat, no entry
 
     # ── Volatility regime filter ───────────────────────────────────────────────
     use_vol_filter: bool = True
@@ -228,20 +223,6 @@ class IctOrderBlockStrategy(BaseStrategy):
                 f"(window={cfg.vol_regime_window})"
             )
 
-        # ── T-stat trend filter ────────────────────────────────────────────────
-        self._trend_filter: Optional[TrendFilter] = None
-        if cfg.use_trend_filter:
-            self._trend_filter = TrendFilter(
-                price=close,
-                window=cfg.trend_window,
-                max_t_stat=99.0,    # No upper cap; strategy doesn't cap trend strength
-            )
-            self._trend_min_tstat = cfg.trend_min_tstat
-            print(
-                f"[ICT_OB] TrendFilter enabled "
-                f"(window={cfg.trend_window}, min_tstat={cfg.trend_min_tstat})"
-            )
-
         # ── State ──────────────────────────────────────────────────────────────
         self._invested: bool = False
         self._position_side: Optional[str] = None
@@ -268,15 +249,12 @@ class IctOrderBlockStrategy(BaseStrategy):
         WFOEngine and read back via the dataclass field loop in __init__.
         """
         return {
-            "ict_ob_impulse_atr_mult": (0.3, 2.0, 0.1),
-            "ict_ob_max_age_bars":     (10,  100,  5),
-            "ict_atr_tp_mult":         (1.5,  8.0, 0.5),
-            "ict_min_rr_ratio":        (1.5,  6.0, 0.5),
-            "ict_sl_offset_ticks":     (0,    10,   1),
-            "ict_trend_min_tstat":     (0.5,  3.0, 0.25),
-            "ict_trend_sma_window":    (200, 3000,  100),
-            "ict_vol_min_pct":         (0.10, 0.60, 0.05),
-            "ict_vol_max_pct":         (0.60, 1.00, 0.05),
+            "ict_ob_impulse_atr_mult": (0.5, 1.5, 0.1),
+            "ict_ob_max_age_bars":     (10, 60, 5),
+            "ict_atr_tp_mult":         (2.0, 5.0, 0.25),
+            "ict_sl_offset_ticks":     (0, 3, 1),
+            "ict_vol_min_pct":         (0.10, 0.35, 0.05),
+            "ict_vol_max_pct":         (0.75, 0.95, 0.05),
         }
 
     # ── Main event hook ────────────────────────────────────────────────────────
@@ -511,12 +489,6 @@ class IctOrderBlockStrategy(BaseStrategy):
         # ── Volatility regime ─────────────────────────────────────────────────
         if self._vol_filter and not self._vol_filter.is_allowed(timestamp):
             return False
-
-        # ── Trend T-stat (flat market gate) ───────────────────────────────────
-        if self._trend_filter:
-            t_stat = self._trend_filter.as_series().get(timestamp, np.nan)
-            if np.isnan(t_stat) or abs(t_stat) < self._trend_min_tstat:
-                return False
 
         # ── Directional bias via long-term SMA ───────────────────────────────
         if self._trend_sma is not None:

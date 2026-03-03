@@ -112,15 +112,15 @@ class BacktestSettings(BaseSettings):
         return 11.0
 
     # ── Walk-Forward Validation (WFV) scheduling ──────────────────────────────
-    wfo_n_folds: int = 5             # Number of walk-forward folds
-    wfo_test_size_pct: float = 0.15  # Fraction of total data used per test fold
-    wfo_n_trials: int = 500          # Optuna trials per fold
-    wfo_max_parameters: int = 9      # Strict maximum limit for optimized variables
+    wfo_n_folds: int = 4             # Number of walk-forward folds
+    wfo_test_size_pct: float = 0.20  # Fraction of total data used per test fold
+    wfo_n_trials: int = 220          # Optuna trials per fold
+    wfo_max_parameters: int = 6      # Strict maximum limit for optimized variables
 
     # Pruning / quality gates
-    wfo_prune_min_trades: int = 10         # Minimum trades for a trial to pass
-    wfo_prune_max_dd_pct: float = 30.0    # Max drawdown % before early pruning
-    wfo_prune_target_trades_mult: int = 5  # target_trades = min_trades * this
+    wfo_prune_min_trades: int = 8         # Minimum trades for a trial to pass
+    wfo_prune_max_dd_pct: float = 35.0    # Max drawdown % before early pruning
+    wfo_prune_target_trades_mult: int = 3  # target_trades = min_trades * this
 
     # ── Path helpers ───────────────────────────────────────────────────────────
     def get_results_path(self) -> Path:

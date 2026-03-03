@@ -21,7 +21,7 @@ import pandas as pd
 
 from src.backtest_engine.execution import Order
 from src.strategies.base import BaseStrategy
-from src.strategies.filters import HalfLifeFilter, TrendFilter, VolatilityRegimeFilter
+from src.strategies.filters import TrendFilter, VolatilityRegimeFilter
 
 
 @dataclass
@@ -65,12 +65,6 @@ class MeanReversionConfig:
     use_trend_filter: bool = True  # Block trading if the market is trending
     trend_window: int = 100        # Window to look for trends
     trend_max_tstat: float = 2.5   # Block entries if T-Stat is > 2.0 (we only want flat, choppy markets)
-    
-    use_hl_filter: bool = True     # Mathematically verify the market is mean-reverting fast enough
-    hl_window: int = 100           # Window for the test
-    hl_baseline: float = 5.0       # Max half-life baseline
-    hl_multiplier: float = 1.5     # Multiplier. Block entries if HL > baseline * multiplier
-    hl_max_holding_mult: float = 0.5 # Exit early if holding for longer than max_holding_mult * HL
 
     atr_window: int = 40           # Lookback window for ATR
     atr_sl_mult: float = 1.0       # Stop-loss distance in ATR multiples
@@ -156,23 +150,10 @@ class MeanReversionStrategy(BaseStrategy):
             )
             print(f"[MeanRev] TrendFilter enabled (window={cfg.trend_window}, max_tstat={cfg.trend_max_tstat})")
 
-        self._hl_filter: Optional[HalfLifeFilter] = None
-        if cfg.use_hl_filter:
-            self._hl_filter = HalfLifeFilter(
-                series=close,
-                window=cfg.hl_window,
-                max_half_life=cfg.hl_baseline * cfg.hl_multiplier,
-                lambda_min=getattr(engine.settings, "hl_lambda_min", 1e-4),
-                max_cap=getattr(engine.settings, "hl_max_cap", 500.0),
-            )
-            print(f"[MeanRev] HalfLifeFilter enabled (window={cfg.hl_window}, max_hl={cfg.hl_baseline * cfg.hl_multiplier})")
-
         # ── Position tracking ──────────────────────────────────────────────
         self._invested: bool = False
         self._position_side: Optional[str] = None
         self._sl_price: float = 0.0
-        self._bars_held: int = 0
-        self._entry_hl: float = 0.0
 
         valid = self._rsi.notna().sum()
         print(
@@ -190,16 +171,12 @@ class MeanReversionStrategy(BaseStrategy):
         by WFOEngine and read back via getattr() in __init__.
         """
         return {
-            "mr_rsi_window":      (7,  30,  1),
-            "mr_rsi_oversold":    (20.0, 40.0, 5.0),
-            "mr_rsi_overbought":  (60.0, 80.0, 5.0),
-            "mr_trend_max_tstat": (1.0, 3.5, 0.25),
-            "mr_atr_window":      (10,  40,  5),
-            "mr_atr_sl_mult":     (1.5, 4.0, 0.5),
-            "mr_vol_min_pct":     (0.10, 0.50, 0.05),
-            "mr_vol_max_pct":     (0.50, 0.95, 0.05),
-            "mr_hl_baseline":     (2.0, 10.0, 1.0),
-            "mr_hl_multiplier":   (1.0, 4.0, 0.5),
+            "mr_rsi_window":      (8, 24, 2),
+            "mr_rsi_oversold":    (18.0, 35.0, 1.0),
+            "mr_rsi_overbought":  (65.0, 82.0, 1.0),
+            "mr_atr_sl_mult":     (0.8, 2.5, 0.2),
+            "mr_trend_max_tstat": (1.5, 3.0, 0.25),
+            "mr_vol_max_pct":     (0.75, 0.95, 0.05),
         }
 
     # ── Event hook ─────────────────────────────────────────────────────────────
@@ -227,16 +204,6 @@ class MeanReversionStrategy(BaseStrategy):
 
         # ── Exit logic (mean reversion to midline + SL/Time Stop) ──────────────
         if self._invested:
-            self._bars_held += 1
-            
-            # Time stop based on Half-Life
-            if self._bars_held > (self._entry_hl * cfg.hl_max_holding_mult):
-                orders.append(
-                    self.market_order("SELL" if self._position_side == "LONG" else "BUY", 
-                                      self.settings.fixed_qty, reason="TIME_STOP")
-                )
-                self._reset_state()
-                return orders
             if self._position_side == "LONG":
                 if close <= self._sl_price:
                     orders.append(self.market_order("SELL", self.settings.fixed_qty, reason="STOP_LOSS"))
@@ -267,8 +234,6 @@ class MeanReversionStrategy(BaseStrategy):
                 self._invested = True
                 self._position_side = "LONG"
                 self._sl_price = close - (atr_val * cfg.atr_sl_mult)
-                self._bars_held = 0
-                self._entry_hl = self._hl_filter.get(timestamp, cfg.hl_baseline) if self._hl_filter else cfg.hl_baseline
                 orders.append(self.market_order("BUY", self.settings.fixed_qty, reason="SIGNAL"))
 
             # Short: RSI overbought (must be flat market with normal vol)
@@ -276,8 +241,6 @@ class MeanReversionStrategy(BaseStrategy):
                 self._invested = True
                 self._position_side = "SHORT"
                 self._sl_price = close + (atr_val * cfg.atr_sl_mult)
-                self._bars_held = 0
-                self._entry_hl = self._hl_filter.get(timestamp, cfg.hl_baseline) if self._hl_filter else cfg.hl_baseline
                 orders.append(self.market_order("SELL", self.settings.fixed_qty, reason="SIGNAL"))
 
         return orders
@@ -298,8 +261,6 @@ class MeanReversionStrategy(BaseStrategy):
             return False
         if self._trend_filter and not self._trend_filter.is_allowed(timestamp):
             return False
-        if self._hl_filter and not self._hl_filter.is_allowed(timestamp):
-            return False
         return True
 
     def _reset_state(self) -> None:
@@ -307,5 +268,3 @@ class MeanReversionStrategy(BaseStrategy):
         self._invested = False
         self._position_side = None
         self._sl_price = 0.0
-        self._bars_held = 0
-        self._entry_hl = 0.0

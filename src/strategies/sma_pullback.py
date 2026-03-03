@@ -20,7 +20,6 @@ import pandas as pd
 
 from src.backtest_engine.execution import Order
 from src.strategies.base import BaseStrategy
-from src.strategies.filters import HalfLifeFilter, TrendFilter
 
 @dataclass
 class SmaPullbackConfig:
@@ -51,15 +50,6 @@ class SmaPullbackConfig:
     rr_ratio: float = 3.0
 
     trade_direction: str = "both"
-
-    use_trend_filter: bool = True
-    trend_window: int = 100
-    trend_min_tstat: float = 1.9
-
-    use_hl_filter: bool = True
-    hl_window: int = 100
-    hl_baseline: float = 5.0
-    hl_max_holding_mult: float = 2.0
 
 
 class SmaPullbackStrategy(BaseStrategy):
@@ -110,31 +100,10 @@ class SmaPullbackStrategy(BaseStrategy):
         self._signal = signals
         self._atr = atr
 
-        # Filters
-        self._trend_filter: Optional[TrendFilter] = None
-        if cfg.use_trend_filter:
-            self._trend_filter = TrendFilter(price=close, window=cfg.trend_window, max_t_stat=99.0)
-            self._trend_min_tstat = cfg.trend_min_tstat
-            print(f"[SMA Pullback] TrendFilter enabled (window={cfg.trend_window}, min_tstat={cfg.trend_min_tstat})")
-
-        self._hl_filter: Optional[HalfLifeFilter] = None
-        if cfg.use_hl_filter:
-            self._hl_filter = HalfLifeFilter(
-                series=close,
-                window=cfg.hl_window,
-                max_half_life=cfg.hl_baseline,
-                lambda_min=getattr(engine.settings, "hl_lambda_min", 1e-4),
-                max_cap=getattr(engine.settings, "hl_max_cap", 500.0)
-            )
-            print(f"[SMA Pullback] HalfLife Time-Stop enabled (window={cfg.hl_window})")
-
-        # State tracking
         self._invested = False
         self._position_side = None
         self._sl_price = 0.0
         self._tp_price = 0.0
-        self._bars_held = 0
-        self._entry_hl = 0.0
         
         valid = self._signal.notna().sum()
         n_touches = int((self._signal != 0).sum())
@@ -163,17 +132,6 @@ class SmaPullbackStrategy(BaseStrategy):
 
         # ── In Position ──
         if self._invested:
-            self._bars_held += 1
-
-            # Time stop check
-            if self._hl_filter and self._bars_held > (self._entry_hl * self.config.hl_max_holding_mult):
-                orders.append(
-                    self.market_order("SELL" if self._position_side == "LONG" else "BUY", 
-                                      self.settings.fixed_qty, reason="TIME_STOP")
-                )
-                self._reset_state()
-                return orders
-
             # Stop Loss & Take Profit checks
             if self._position_side == "LONG":
                 if c_low <= self._sl_price or c_high >= self._tp_price:
@@ -191,9 +149,6 @@ class SmaPullbackStrategy(BaseStrategy):
 
         # ── Entry Logic ──
         if not self._invested and signal != 0.0:
-            if not self._filters_allow(timestamp):
-                return orders
-
             direction = self.config.trade_direction.lower()
             if direction == "long" and signal == -1.0:
                 return orders
@@ -206,8 +161,6 @@ class SmaPullbackStrategy(BaseStrategy):
                 sl_dist = atr_val * self.config.atr_sl_mult
                 self._sl_price = c_close - sl_dist
                 self._tp_price = c_close + (sl_dist * self.config.rr_ratio)
-                self._bars_held = 0
-                self._entry_hl = self._hl_filter.get(timestamp, self.config.hl_baseline) if self._hl_filter else self.config.hl_baseline
                 
                 orders.append(self.market_order("BUY", self.settings.fixed_qty, reason="PULLBACK_LONG"))
                 
@@ -217,39 +170,23 @@ class SmaPullbackStrategy(BaseStrategy):
                 sl_dist = atr_val * self.config.atr_sl_mult
                 self._sl_price = c_close + sl_dist
                 self._tp_price = c_close - (sl_dist * self.config.rr_ratio)
-                self._bars_held = 0
-                self._entry_hl = self._hl_filter.get(timestamp, self.config.hl_baseline) if self._hl_filter else self.config.hl_baseline
                 
                 orders.append(self.market_order("SELL", self.settings.fixed_qty, reason="PULLBACK_SHORT"))
 
         return orders
-
-    def _filters_allow(self, timestamp: Any) -> bool:
-        if self._trend_filter:
-            try:
-                t = self._trend_filter.as_series().at[timestamp]
-                if np.isnan(t) or abs(t) < self._trend_min_tstat:
-                    return False
-            except KeyError:
-                return False
-        return True
 
     def _reset_state(self) -> None:
         self._invested = False
         self._position_side = None
         self._sl_price = 0.0
         self._tp_price = 0.0
-        self._bars_held = 0
-        self._entry_hl = 0.0
 
     @classmethod
     def get_search_space(cls) -> Dict[str, Any]:
         return {
-            "smapull_fast_sma_window": (20, 100, 10),
-            "smapull_slow_sma_window": (100, 500, 50),
-            "smapull_atr_sl_mult": (1.0, 4.0, 0.5),
-            "smapull_rr_ratio": (1.0, 5.0, 0.5),
-            "smapull_trend_min_tstat": (1.0, 3.0, 0.25),
-            "smapull_hl_baseline": (2.0, 10.0, 1.0),
-            "smapull_hl_max_holding_mult": (1.0, 5.0, 0.5),
+            "smapull_fast_sma_window": (30, 90, 10),
+            "smapull_slow_sma_window": (120, 320, 20),
+            "smapull_atr_window":      (10, 30, 5),
+            "smapull_atr_sl_mult":     (1.0, 3.0, 0.25),
+            "smapull_rr_ratio":        (1.5, 4.0, 0.25),
         }
