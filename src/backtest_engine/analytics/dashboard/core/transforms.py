@@ -422,7 +422,7 @@ def compute_rolling_sharpe(
         return pd.Series(dtype=float)
 
     # Step 2: daily returns (not PnL — must be return = equity_t/equity_{t-1} - 1)
-    daily_ret: pd.Series = daily_equity.pct_change().dropna()
+    daily_ret: pd.Series = daily_equity.pct_change(fill_method=None).dropna()
 
     ann_factor: float = np.sqrt(252.0)
     rf_daily:   float = risk_free_rate / 252.0
@@ -592,7 +592,7 @@ def compute_per_strategy_summary(
                     
                     # Instrument Returns
                     inst_close = instrument_closes[target_sym].resample("1D").last()
-                    inst_rets = inst_close.pct_change().fillna(0.0)
+                    inst_rets = inst_close.pct_change(fill_method=None).fillna(0.0)
 
                     # Align timestamps
                     aligned = pd.concat([strat_rets, inst_rets], axis=1, join='inner').dropna()

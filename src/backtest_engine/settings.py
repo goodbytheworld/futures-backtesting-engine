@@ -108,7 +108,7 @@ class BacktestSettings(BaseSettings):
     ib_use_rth: bool = False
     # ── Cache Management ───────────────────────────────────────────────────────
     max_cache_staleness_days: int = Field(
-        default=3,
+        default=20,
         description="Maximum allowed cache age in days for backtest runs.",
     )
 

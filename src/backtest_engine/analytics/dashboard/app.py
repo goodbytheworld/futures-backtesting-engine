@@ -46,6 +46,7 @@ from src.backtest_engine.analytics.dashboard.simulation_analysis.sim_placeholder
 from src.backtest_engine.analytics.dashboard.core.components import (
     render_decomp_table,
     render_correlation_horizon_selector,
+    render_dataframe,
 )
 from src.backtest_engine.analytics.dashboard.core.transforms import (
     build_bar_pnl_matrix,
@@ -156,10 +157,8 @@ def _render_pnl_tab(bundle: ResultBundle, window_days: int) -> None:
         st_summ = compute_exit_summary(bundle.trades, {"single": "Single Asset"})
 
     if not st_summ.empty:
-        event = st.dataframe(
+        event = render_dataframe(
             st_summ,
-            width="stretch",
-            hide_index=True,
             selection_mode="single-row",
             on_select="rerun"
         )
@@ -180,7 +179,10 @@ def _render_pnl_tab(bundle: ResultBundle, window_days: int) -> None:
     # ── Row 4: PnL Distribution (full width since legacy table is removed) ─────
     st.markdown("#### Daily PnL Distribution")
     fig_dist = build_pnl_distribution_figure(daily_pnl, dist_stats)
-    st.plotly_chart(fig_dist, use_container_width=True)
+    
+    col_l, col_m, col_r = st.columns([1, 2, 1])
+    with col_m:
+        st.plotly_chart(fig_dist, use_container_width=True)
 
     if not is_portfolio:
         return
@@ -267,6 +269,19 @@ def main() -> None:
         <style>
             .block-container { padding-top: 1rem; padding-bottom: 0rem; }
             pre { font-size: 0.55rem; line-height: 1.08; }
+            
+            /* Expand dialog width to fit screen content better */
+            div[data-testid="stDialog"] > div[role="dialog"],
+            div[data-testid="stModal"] > div[role="dialog"],
+            div[role="dialog"] {
+                width: 90vw !important;
+                max-width: 1200px !important;
+            }
+            
+            div[role="dialog"] .block-container {
+                max-width: 100% !important;
+                width: 100% !important;
+            }
         </style>
         """,
         unsafe_allow_html=True,

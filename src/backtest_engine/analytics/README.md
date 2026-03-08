@@ -14,7 +14,7 @@ This directory contains the post-execution analytics, reporting, and dashboard v
 ## Subdirectories
 
 - **`dashboard/`**: Contains the Streamlit visual UI web application that renders the backtest results.
-  - **`core/`**: Shared data handlers, Streamlit components, dataframe transforms, and plotting palettes.
+  - **`core/`**: Shared data handlers, UI wrappers (e.g., `render_dataframe` for Streamlit API isolation), Streamlit components, dataframe transforms, and plotting palettes.
   - **`pnl_analysis/`**: Components and charts for the default PnL Analysis view (Equity curves, PnL distributions, Drawdowns, Exit Decompositions, and Correlations).
   - **`risk_analysis/`**: Placeholder for future advanced Risk visualizations.
   - **`simulation_analysis/`**: Placeholder for future Monte Carlo scenarios and simulations.

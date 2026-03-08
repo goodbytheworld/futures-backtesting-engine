@@ -25,7 +25,7 @@ To run a backtest AND open the dashboard immediately after:
     python run.py --portfolio-backtest --dashboard
 
 ── Data Management ──────────────────────────────────────────────────────────
-    python run.py --download ES NQ CL GC
+    python run.py --download ES NQ YM RTY CL GC SI
 """
 
 import argparse

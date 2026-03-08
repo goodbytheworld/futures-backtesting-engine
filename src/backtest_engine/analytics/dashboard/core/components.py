@@ -128,7 +128,37 @@ def render_decomp_table(decomp_df: Optional[pd.DataFrame]) -> None:
     if "Sharpe" in decomp_df.columns:
         style = style.map(_color_sharpe, subset=["Sharpe"])
 
-    st.dataframe(style, width="stretch", hide_index=True)
+    render_dataframe(style)
+
+
+def render_dataframe(
+    data: pd.DataFrame | pd.io.formats.style.Styler,
+    hide_index: bool = True,
+    selection_mode: str = "none",
+    on_select: str = "ignore",
+    height: int | None = None,
+) -> dict | None:
+    """
+    Central wrapper for st.dataframe to isolate Streamlit API changes.
+    
+    Args:
+        data: DataFrame or Styler to render.
+        hide_index: Whether to hide the index column.
+        selection_mode: Selection mode ("none", "single-row", "multi-row", etc.).
+        on_select: Behavior on selection ("ignore", "rerun").
+        height: Optional fixed height.
+        
+    Returns:
+        The Streamlit event object if selection is enabled, else None.
+    """
+    return st.dataframe(
+        data,
+        use_container_width=True,
+        hide_index=hide_index,
+        selection_mode=selection_mode,
+        on_select=on_select,
+        height=height,
+    )
 
 
 
