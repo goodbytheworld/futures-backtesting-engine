@@ -41,7 +41,11 @@ from src.backtest_engine.analytics.dashboard.pnl_analysis.exit_decomposition imp
     build_exit_reason_chart,
     build_vol_regime_chart,
 )
-from src.backtest_engine.analytics.dashboard.risk_analysis.risk_placeholder import render_risk_tab
+from src.backtest_engine.analytics.dashboard.risk_analysis.risk_tab import render_risk_tab
+from src.backtest_engine.analytics.dashboard.risk_analysis.models import (
+    RiskDashboardConfig,
+    StressMultipliers,
+)
 from src.backtest_engine.analytics.dashboard.simulation_analysis.sim_placeholder import render_simulation_tab
 from src.backtest_engine.analytics.dashboard.core.components import (
     render_decomp_table,
@@ -61,34 +65,54 @@ from src.backtest_engine.analytics.dashboard.core.transforms import (
 
 
 # ── Cached computation wrappers ────────────────────────────────────────────────
-# @st.cache_data lives here (not in transforms.py) to keep transforms.py
+# @st.cache_data lives here (not in transforms package) to keep transforms
 # importable without a live Streamlit session — critical for unit tests.
 
 @st.cache_data(show_spinner=False)
-def _cached_bar_pnl_matrix(history_hash: str, slots_hash: str,
-                            history: pd.DataFrame,
-                            slots: dict) -> pd.DataFrame:
-    """Cache the bar PnL matrix by DataFrame hash + slots hash."""
+def _cached_bar_pnl_matrix(history: pd.DataFrame, slots: dict) -> pd.DataFrame:
+    """Cache the bar PnL matrix by DataFrame hash."""
     return build_bar_pnl_matrix(history, slots)
 
-
 @st.cache_data(show_spinner=False)
-def _cached_rolling_sharpe(history_hash: str, history: pd.DataFrame,
-                            window_days: int) -> pd.Series:
+def _cached_rolling_sharpe(history: pd.DataFrame, window_days: int) -> pd.Series:
     """Cache rolling Sharpe by DataFrame hash + window config."""
     return compute_rolling_sharpe(history, window_days=window_days)
 
-
-def _derive_daily_pnl(history: pd.DataFrame) -> pd.Series:
-    """
-    Derives a daily PnL series from the portfolio history total_value column.
-
-    Methodology:
-        bar_pnl   = total_value.diff()  (incremental, not cumulative)
-        daily_pnl = bar_pnl.resample('1D').sum()
-    """
+@st.cache_data(show_spinner=False)
+def _cached_derive_daily_pnl(history: pd.DataFrame) -> pd.Series:
+    """Cache the daily PnL derivation."""
     bar_pnl = history["total_value"].diff().fillna(0.0)
     return bar_pnl.resample("1D").sum()
+
+@st.cache_data(show_spinner=False)
+def _cached_compute_pnl_dist_stats(daily_pnl: pd.Series) -> dict:
+    """Cache distribution stats computation."""
+    return compute_pnl_dist_stats(daily_pnl)
+
+@st.cache_data(show_spinner=False)
+def _cached_compute_per_strategy_summary(trades: pd.DataFrame, slots: dict, history: pd.DataFrame, instrument_closes: pd.DataFrame, slot_weights: dict) -> dict:
+    """Cache per-strategy stats computation."""
+    return compute_per_strategy_summary(trades, slots, history, instrument_closes, slot_weights)
+
+@st.cache_data(show_spinner=False)
+def _cached_compute_exit_summary(trades: pd.DataFrame, slots: dict) -> pd.DataFrame:
+    """Cache exit summary computation."""
+    return compute_exit_summary(trades, slots)
+
+@st.cache_data(show_spinner=False)
+def _cached_compute_strategy_decomp(trades_df: pd.DataFrame, history: pd.DataFrame, slots: dict) -> pd.DataFrame:
+    """Cache strategy decomposition computation."""
+    return compute_strategy_decomp(trades_df=trades_df, history=history, slots=slots)
+
+@st.cache_data(show_spinner=False)
+def _cached_compute_strategy_correlation(bar_pnl_matrix: pd.DataFrame, horizon: str) -> pd.DataFrame:
+    """Cache strategy correlation matrix computation."""
+    return compute_strategy_correlation(bar_pnl_matrix, horizon=horizon)
+
+@st.cache_data(show_spinner=False)
+def _cached_compute_exposure_correlation(exposure: pd.DataFrame, horizon: str) -> tuple[pd.DataFrame, list[str]]:
+    """Cache exposure correlation matrix computation."""
+    return compute_exposure_correlation(exposure, horizon=horizon)
 
 
 def _render_pnl_tab(bundle: ResultBundle, window_days: int) -> None:
@@ -102,19 +126,19 @@ def _render_pnl_tab(bundle: ResultBundle, window_days: int) -> None:
     is_portfolio: bool = bundle.run_type == "portfolio"
 
     # ── Pre-compute ────────────────────────────────────────────────────────────
-    daily_pnl: pd.Series = _derive_daily_pnl(bundle.history)
-    dist_stats: dict     = compute_pnl_dist_stats(daily_pnl)
+    daily_pnl: pd.Series = _cached_derive_daily_pnl(bundle.history)
+    dist_stats: dict     = _cached_compute_pnl_dist_stats(daily_pnl)
 
     rolling_sharpe    = None
     strategy_summaries = None
     bar_pnl_matrix    = None
 
     if is_portfolio and bundle.slots:
-        bar_pnl_matrix   = build_bar_pnl_matrix(bundle.history, bundle.slots)
-        strategy_summaries = compute_per_strategy_summary(
+        bar_pnl_matrix   = _cached_bar_pnl_matrix(bundle.history, bundle.slots)
+        strategy_summaries = _cached_compute_per_strategy_summary(
             bundle.trades, bundle.slots, bundle.history, bundle.instrument_closes, getattr(bundle, "slot_weights", None)
         )
-        rolling_sharpe   = compute_rolling_sharpe(
+        rolling_sharpe   = _cached_rolling_sharpe(
             bundle.history, window_days=window_days
         )
 
@@ -152,9 +176,9 @@ def _render_pnl_tab(bundle: ResultBundle, window_days: int) -> None:
 
     st_summ = pd.DataFrame()
     if is_portfolio and bundle.slots:
-        st_summ = compute_exit_summary(bundle.trades, bundle.slots)
+        st_summ = _cached_compute_exit_summary(bundle.trades, bundle.slots)
     else:
-        st_summ = compute_exit_summary(bundle.trades, {"single": "Single Asset"})
+        st_summ = _cached_compute_exit_summary(bundle.trades, {"single": "Single Asset"})
 
     if not st_summ.empty:
         event = render_dataframe(
@@ -191,7 +215,7 @@ def _render_pnl_tab(bundle: ResultBundle, window_days: int) -> None:
 
     # ── Row 5: Strategy PnL Decomposition table (full width) ──────────────────
     st.markdown("#### Strategy PnL Decomposition")
-    decomp_df = compute_strategy_decomp(
+    decomp_df = _cached_compute_strategy_decomp(
         trades_df=bundle.trades,
         history=bundle.history,
         slots=bundle.slots or {},
@@ -218,7 +242,7 @@ def _render_pnl_tab(bundle: ResultBundle, window_days: int) -> None:
 
     with col_strat_corr:
         st.markdown("**Strategy PnL Correlation**")
-        strat_corr_matrix = compute_strategy_correlation(
+        strat_corr_matrix = _cached_compute_strategy_correlation(
             bar_pnl_matrix if bar_pnl_matrix is not None else pd.DataFrame(),
             horizon=horizon,
         )
@@ -231,22 +255,30 @@ def _render_pnl_tab(bundle: ResultBundle, window_days: int) -> None:
     with col_exp_corr:
         st.markdown("**Exposure Correlation (by Instrument)**")
         if bundle.exposure is not None and not bundle.exposure.empty:
-            exp_corr_matrix = compute_exposure_correlation(
+            exp_corr_matrix, dropped_inst = _cached_compute_exposure_correlation(
                 bundle.exposure, horizon=horizon
             )
             if exp_corr_matrix.empty:
-                st.info(
-                    f"Too few samples at **{horizon}** horizon to compute exposure "
-                    "correlation meaningfully. Try a shorter horizon (1d) or run "
-                    "a longer backtest.",
-                    icon="ℹ️",
-                )
+                if dropped_inst:
+                    st.info(
+                        f"Insufficient data for instrument(s): {', '.join(dropped_inst)}. "
+                        "Need at least 2 valid instruments to compute correlation.",
+                        icon="ℹ️"
+                    )
+                else:
+                    st.info(
+                        "Exposure Correlation requires at least 2 distinct instruments.",
+                        icon="ℹ️"
+                    )
             else:
                 fig_exp_corr = build_correlation_heatmap(
                     exp_corr_matrix,
                     title=f"Exposure Correlation ({horizon})",
                 )
                 st.plotly_chart(fig_exp_corr, use_container_width=True)
+                
+                if dropped_inst:
+                    st.info(f"Insufficient data for instrument(s): {', '.join(dropped_inst)}", icon="ℹ️")
         else:
             st.info("No exposure data (`exposure.parquet` missing from results/portfolio/).")
 
@@ -292,8 +324,44 @@ def main() -> None:
         from src.backtest_engine.settings import get_settings
         _settings = get_settings()
         window_days: int  = _settings.rolling_sharpe_window_days
+        risk_free_rate: float = float(_settings.risk_free_rate)
+        instrument_specs: dict = _settings.instrument_specs
+        risk_config = RiskDashboardConfig(
+            var_confidence_primary=float(_settings.dashboard_risk_var_primary_confidence),
+            var_confidence_tail=float(_settings.dashboard_risk_var_tail_confidence),
+            rolling_var_window_days=int(_settings.dashboard_risk_rolling_var_window_days),
+            rolling_vol_windows=(
+                int(_settings.dashboard_risk_rolling_vol_window_short_days),
+                int(_settings.dashboard_risk_rolling_vol_window_medium_days),
+                int(_settings.dashboard_risk_rolling_vol_window_long_days),
+            ),
+            stress_slider_min=float(_settings.dashboard_stress_slider_min_multiplier),
+            stress_slider_max=float(_settings.dashboard_stress_slider_max_multiplier),
+            stress_slider_step=float(_settings.dashboard_stress_slider_step),
+            stress_defaults=StressMultipliers(
+                volatility=float(_settings.dashboard_stress_volatility_default_multiplier),
+                slippage=float(_settings.dashboard_stress_slippage_default_multiplier),
+                commission=float(_settings.dashboard_stress_commission_default_multiplier),
+            ),
+        )
     except Exception:
         window_days = 90   # safe default
+        risk_free_rate = 0.0
+        instrument_specs = {}
+        risk_config = RiskDashboardConfig(
+            var_confidence_primary=0.95,
+            var_confidence_tail=0.99,
+            rolling_var_window_days=60,
+            rolling_vol_windows=(20, 50, 100),
+            stress_slider_min=1.0,
+            stress_slider_max=5.0,
+            stress_slider_step=0.5,
+            stress_defaults=StressMultipliers(
+                volatility=2.0,
+                slippage=3.0,
+                commission=2.0,
+            ),
+        )
 
     # ── Load results ───────────────────────────────────────────────────────────
     bundle = load_result_bundle()
@@ -319,7 +387,12 @@ def main() -> None:
         _render_pnl_tab(bundle, window_days=window_days)
 
     with tab_risk:
-        render_risk_tab()
+        render_risk_tab(
+            bundle,
+            config=risk_config,
+            instrument_specs=instrument_specs,
+            risk_free_rate=risk_free_rate,
+        )
         
     with tab_sim:
         render_simulation_tab()

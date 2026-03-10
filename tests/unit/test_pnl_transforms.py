@@ -116,6 +116,7 @@ def test_decomp_contribution_abs_sum_is_100_pct() -> None:
     assert math.isclose(total_abs_contribution, 100.0, abs_tol=0.11), (
         f"Absolute PnL contributions sum to {total_abs_contribution:.3f}%, expected ~100%."
     )
+    assert "MTM PnL ($)" not in decomp.columns, "MTM PnL should not be rendered in decomposition."
 
 
 # ── Test 3: Correlation diagonal = 1, off-diagonal < 1 ───────────────────────
@@ -221,7 +222,7 @@ def test_transforms_handle_empty_inputs() -> None:
     assert build_bar_pnl_matrix(empty_hist, {}).empty
     assert compute_strategy_decomp(empty_df, empty_hist, {}).empty
     assert compute_strategy_correlation(empty_df).empty
-    assert compute_exposure_correlation(empty_df).empty
+    assert compute_exposure_correlation(empty_df)[0].empty
 
     stats = compute_pnl_dist_stats(pd.Series([], dtype=float))
     assert all(np.isnan(v) for v in stats.values())
@@ -272,3 +273,57 @@ def test_per_strategy_summary_statistics() -> None:
     from scipy import stats
     expected_t, _ = stats.ttest_1samp(trades["pnl"], 0.0)
     assert math.isclose(strat_stats["tstat"], float(expected_t), rel_tol=1e-5)
+
+
+def test_per_strategy_summary_alpha_beta_use_daily_returns() -> None:
+    """
+    Ensures alpha/beta regression is performed on daily strategy returns,
+    producing stable estimates on a synthetic linear factor model.
+    """
+    slots = {"0": "StrategyA"}
+    n_days = 120
+    beta_true = 1.5
+    alpha_daily = 0.0004
+    initial_capital = 100_000.0
+
+    idx = pd.date_range("2024-01-01", periods=n_days, freq="1D")
+    rng = np.random.default_rng(123)
+    instrument_returns = pd.Series(rng.normal(0.0005, 0.01, n_days), index=idx)
+    strategy_returns = alpha_daily + beta_true * instrument_returns
+
+    instrument_closes = pd.DataFrame({
+        "TEST_SYM": 100.0 * (1.0 + instrument_returns).cumprod()
+    }, index=idx)
+
+    strategy_equity = initial_capital * (1.0 + strategy_returns).cumprod()
+    history = pd.DataFrame({
+        "total_value": strategy_equity,
+        "slot_0_pnl": strategy_equity - initial_capital,
+    }, index=idx)
+
+    trades = pd.DataFrame({
+        "strategy": ["StrategyA"] * 12,
+        "symbol": ["TEST_SYM"] * 12,
+        "pnl": np.linspace(10.0, 120.0, 12),
+        "direction": ["LONG"] * 12,
+    })
+
+    summary = compute_per_strategy_summary(
+        trades,
+        slots,
+        history=history,
+        instrument_closes=instrument_closes,
+        slot_weights={"0": 1.0},
+    )
+
+    strat_stats = summary["StrategyA"]
+
+    assert math.isclose(strat_stats["beta"], beta_true, rel_tol=0.03), (
+        f"Expected beta near {beta_true}, got {strat_stats['beta']:.4f}"
+    )
+    expected_alpha_annual_pct = alpha_daily * 252.0 * 100.0
+    assert math.isclose(strat_stats["alpha"], expected_alpha_annual_pct, rel_tol=0.08), (
+        f"Expected annual alpha near {expected_alpha_annual_pct:.4f}, got {strat_stats['alpha']:.4f}"
+    )
+    assert 0.0 <= strat_stats["beta_p"] <= 1.0
+    assert 0.0 <= strat_stats["alpha_p"] <= 1.0

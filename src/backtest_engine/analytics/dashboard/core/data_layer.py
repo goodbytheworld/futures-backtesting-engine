@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+import streamlit as st
 
 from src.backtest_engine.analytics.dashboard.core.components import get_results_dir
 
@@ -41,7 +42,8 @@ class ResultBundle:
     slot_weights: Dict[str, float] = None
 
 
-def load_result_bundle(results_dir: Optional[Path] = None) -> Optional[ResultBundle]:
+@st.cache_data(show_spinner="Loading Backtest Artifacts...")
+def load_result_bundle(results_dir: Optional[str] = None) -> Optional[ResultBundle]:
     """
     Auto-detects run type and loads all artifacts into a unified ResultBundle.
 
@@ -56,7 +58,10 @@ def load_result_bundle(results_dir: Optional[Path] = None) -> Optional[ResultBun
     Returns:
         ResultBundle if artifacts are found, None otherwise.
     """
-    base_dir = results_dir or get_results_dir()
+    if results_dir is not None:
+        base_dir = Path(results_dir)
+    else:
+        base_dir = get_results_dir()
     
     marker_path = base_dir / ".run_type"
     portfolio_dir = base_dir / "portfolio"

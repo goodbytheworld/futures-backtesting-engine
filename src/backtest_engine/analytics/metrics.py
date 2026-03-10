@@ -14,6 +14,32 @@ import pandas as pd
 import scipy.stats as stats
 
 
+def calc_sample_sharpe(returns: pd.Series, risk_free_rate_per_period: float = 0.0) -> float:
+    """
+    Calculates the sample Sharpe ratio directly from the observed return series.
+
+    Methodology:
+        Uses the same return sample that enters the DSR/PSR standard error
+        formula, avoiding a mismatch with CAGR-based Sharpe definitions.
+
+    Args:
+        returns: Per-period return series.
+        risk_free_rate_per_period: Risk-free rate per return observation.
+
+    Returns:
+        Non-annualised sample Sharpe ratio.
+    """
+    clean = returns.dropna()
+    if clean.empty:
+        return 0.0
+
+    excess = clean - risk_free_rate_per_period
+    std = float(excess.std())
+    if std <= 0.0 or pd.isna(std):
+        return 0.0
+    return float(excess.mean() / std)
+
+
 def calc_total_return(equity: pd.Series) -> float:
     """
     Calculates simple total return from first to last bar.
@@ -88,7 +114,10 @@ def calc_annualised_vol(returns: pd.Series, bars_per_year: float) -> float:
     Returns:
         Annualised volatility.
     """
-    return returns.std() * np.sqrt(bars_per_year)
+    clean = returns.dropna()
+    if clean.empty:
+        return 0.0
+    return float(clean.std() * np.sqrt(bars_per_year))
 
 
 def calc_sharpe(cagr: float, vol: float, risk_free_rate: float) -> float:
@@ -133,8 +162,9 @@ def calc_sortino(
     Returns:
         Sortino Ratio.
     """
-    downside = returns[returns < 0]
-    downside_std = downside.std() * np.sqrt(bars_per_year)
+    downside = returns.dropna()
+    downside = downside[downside < 0]
+    downside_std = float(downside.std() * np.sqrt(bars_per_year)) if not downside.empty else 0.0
     return (cagr - risk_free_rate) / downside_std if downside_std > 0 else 0.0
 
 
@@ -189,22 +219,31 @@ def calc_dsr(
 
     Args:
         returns: Per-bar return series.
-        sharpe: Calculated Sharpe Ratio for the strategy.
+        sharpe: Legacy input kept for backwards compatibility. The function
+            now derives the sample Sharpe from `returns` because the DSR
+            standard-error formula requires the same return sample.
         trials: Number of trials or parameter combinations tested.
         trials_sharpe: List of Sharpe ratios from all trials.
 
     Returns:
         Deflated Sharpe Ratio (probability that the Sharpe ratio is not due to chance).
     """
-    if len(returns) < 30 or sharpe == 0.0:
+    clean_returns = returns.dropna()
+    if len(clean_returns) < 30:
         return 0.0
 
-    n = len(returns)
-    skewness = float(stats.skew(returns, nan_policy='omit'))
-    kurt = float(stats.kurtosis(returns, fisher=False, nan_policy='omit'))
+    sample_sharpe = calc_sample_sharpe(clean_returns)
+    if sample_sharpe == 0.0:
+        return 0.0
+
+    n = len(clean_returns)
+    skewness = float(stats.skew(clean_returns, nan_policy="omit"))
+    kurt = float(stats.kurtosis(clean_returns, fisher=False, nan_policy="omit"))
 
     # Calculate standard error of Sharpe Ratio
-    sigma_sr = np.sqrt((1 - skewness * sharpe + ((kurt - 1) / 4) * (sharpe ** 2)) / (n - 1))
+    sigma_sr = np.sqrt(
+        (1 - skewness * sample_sharpe + ((kurt - 1) / 4) * (sample_sharpe ** 2)) / (n - 1)
+    )
     
     if sigma_sr == 0.0 or pd.isna(sigma_sr):
         return 0.0
@@ -220,5 +259,5 @@ def calc_dsr(
         term2 = gamma * stats.norm.ppf(1 - 1 / (trials * np.e))
         sr_star = mu_sr + sigma_trials * (term1 + term2)
 
-    dsr = stats.norm.cdf((sharpe - sr_star) / sigma_sr)
+    dsr = stats.norm.cdf((sample_sharpe - sr_star) / sigma_sr)
     return float(dsr)

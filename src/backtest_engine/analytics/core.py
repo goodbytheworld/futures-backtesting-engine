@@ -75,7 +75,7 @@ class PerformanceMetrics:
             return {}
 
         equity: pd.Series = portfolio_history["total_value"]
-        returns: pd.Series = equity.pct_change().fillna(0)
+        returns: pd.Series = equity.pct_change(fill_method=None).dropna()
 
         total_return: float = calc_total_return(equity)
         years:        float = calc_years(equity)

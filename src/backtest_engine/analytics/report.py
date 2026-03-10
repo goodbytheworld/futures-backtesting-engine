@@ -164,7 +164,7 @@ def get_full_report_str(
     lines.append(sep)
     adj_rows: List[Tuple] = [
         ("Sharpe Ratio",         metrics.get("Sharpe Ratio"),          dict(decimals=2)),
-        ("Deflated Sharp Ratio", metrics.get("Deflated Sharpe Ratio"), dict(decimals=2)),
+        ("Deflated Sharpe Ratio", metrics.get("Deflated Sharpe Ratio"), dict(decimals=2)),
         ("Sortino Ratio",        metrics.get("Sortino Ratio"),         dict(decimals=2)),
         ("Calmar Ratio",         metrics.get("Calmar Ratio"),          dict(decimals=2)),
     ]

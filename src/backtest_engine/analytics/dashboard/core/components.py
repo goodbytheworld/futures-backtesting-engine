@@ -84,7 +84,7 @@ def render_decomp_table(decomp_df: Optional[pd.DataFrame]) -> None:
     """
     Renders the Strategy PnL Decomposition table with conditional colouring.
 
-    Applies green/red to 'Total PnL ($)' and Sharpe columns.
+    Applies green/red to realised PnL and Sharpe columns.
     All other columns use 2-decimal precision where needed.
 
     Args:
@@ -110,7 +110,6 @@ def render_decomp_table(decomp_df: Optional[pd.DataFrame]) -> None:
 
     format_map = {
         "Sharpe":                 "{:.2f}",
-        "MTM PnL ($)":            "{:,.0f}",
         "Closed PnL ($)":         "{:,.0f}",
         "PnL Contrib (%)":        "{:.1f}%",
         "Risk Contrib (%)":       "{:.1f}%",
@@ -123,8 +122,8 @@ def render_decomp_table(decomp_df: Optional[pd.DataFrame]) -> None:
 
     style = decomp_df.style.format(active_fmt, na_rep="N/A")
 
-    if "MTM PnL ($)" in decomp_df.columns:
-        style = style.map(_color_pnl, subset=["MTM PnL ($)"])
+    if "Closed PnL ($)" in decomp_df.columns:
+        style = style.map(_color_pnl, subset=["Closed PnL ($)"])
     if "Sharpe" in decomp_df.columns:
         style = style.map(_color_sharpe, subset=["Sharpe"])
 
@@ -151,14 +150,16 @@ def render_dataframe(
     Returns:
         The Streamlit event object if selection is enabled, else None.
     """
-    return st.dataframe(
-        data,
-        use_container_width=True,
-        hide_index=hide_index,
-        selection_mode=selection_mode,
-        on_select=on_select,
-        height=height,
-    )
+    kwargs = {
+        "width": "stretch",
+        "hide_index": hide_index,
+        "selection_mode": selection_mode,
+        "on_select": on_select,
+    }
+    if height is not None:
+        kwargs["height"] = height
+
+    return st.dataframe(data, **kwargs)
 
 
 

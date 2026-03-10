@@ -7,6 +7,10 @@ Execution modes:
     3. Multi-Strategy Portfolio   (--portfolio-backtest)
     4. Dashboard only             (--dashboard)
 
+Strategies:
+    To see the full list of available strategies, run:
+        python run.py --help
+
 ── 1. Single-Asset Backtesting ──────────────────────────────────────────────
     python run.py --backtest --strategy zscore
 

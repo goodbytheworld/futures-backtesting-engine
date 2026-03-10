@@ -26,22 +26,57 @@ portfolio:
   benchmark_symbol: ES                # Buy-and-hold benchmark shown in dashboard (null to disable)
 
   # ── Vol-targeting ─────────────────────────────────────────────────────────
-  target_portfolio_vol: 0.10          # Annualised portfolio vol target (10 %)
+  target_portfolio_vol: 0.25          # Annualised portfolio vol target (25 %)
   vol_lookback_bars: 20               # Rolling window (bars) for realised vol estimate
   max_contracts_per_slot: 3           # Hard cap on contracts per (slot, symbol)
 
 strategies:
 
-  - strategy: sma_pullback
+  - strategy: stat_level
     symbols:
       - GC
-    weight: 0.5
-    timeframe: 5m
+    weight: 0.15
+    timeframe: 30m
+    params: {}
+
+  - strategy: intraday_momentum
+    symbols:
+      - GC
+    weight: 0.10
+    timeframe: 30m
     params: {}
 
   - strategy: sma_pullback
     symbols:
-      - SI
-    weight: 0.5
-    timeframe: 5m
+      - GC
+    weight: 0.15
+    timeframe: 30m
+    params: {}
+
+  - strategy: zscore
+    symbols:
+      - GC
+    weight: 0.15
+    timeframe: 30m
+    params: {}
+
+  - strategy: ict_ob
+    symbols:
+      - GC
+    weight: 0.15
+    timeframe: 30m
+    params: {}
+
+  - strategy: mean_rev
+    symbols:
+      - GC
+    weight: 0.15
+    timeframe: 30m
+    params: {}
+
+  - strategy: sma
+    symbols:
+      - GC
+    weight: 0.15
+    timeframe: 30m
     params: {}

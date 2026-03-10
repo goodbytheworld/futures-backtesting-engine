@@ -108,7 +108,7 @@ class BacktestSettings(BaseSettings):
     ib_use_rth: bool = False
     # ── Cache Management ───────────────────────────────────────────────────────
     max_cache_staleness_days: int = Field(
-        default=20,
+        default=5,
         description="Maximum allowed cache age in days for backtest runs.",
     )
 
@@ -124,6 +124,54 @@ class BacktestSettings(BaseSettings):
     dashboard_bars_per_day: float = Field(
         default=13.0,
         description="Trading bars per calendar day for annualisation (13 = 30-min session 06:30-13:00).",
+    )
+    dashboard_risk_var_primary_confidence: float = Field(
+        default=0.95,
+        description="Primary historical VaR / ES confidence level for the dashboard risk tab.",
+    )
+    dashboard_risk_var_tail_confidence: float = Field(
+        default=0.99,
+        description="Tail historical VaR / ES confidence level for the dashboard risk tab.",
+    )
+    dashboard_risk_rolling_var_window_days: int = Field(
+        default=60,
+        description="Trailing daily window for rolling VaR / ES curves in the dashboard risk tab.",
+    )
+    dashboard_risk_rolling_vol_window_short_days: int = Field(
+        default=20,
+        description="Short rolling volatility window in trading days for the dashboard risk tab.",
+    )
+    dashboard_risk_rolling_vol_window_medium_days: int = Field(
+        default=50,
+        description="Medium rolling volatility window in trading days for the dashboard risk tab.",
+    )
+    dashboard_risk_rolling_vol_window_long_days: int = Field(
+        default=100,
+        description="Long rolling volatility window in trading days for the dashboard risk tab.",
+    )
+    dashboard_stress_slider_min_multiplier: float = Field(
+        default=1.0,
+        description="Minimum multiplier exposed by stress-test sliders in the dashboard risk tab.",
+    )
+    dashboard_stress_slider_max_multiplier: float = Field(
+        default=5.0,
+        description="Maximum multiplier exposed by stress-test sliders in the dashboard risk tab.",
+    )
+    dashboard_stress_slider_step: float = Field(
+        default=0.5,
+        description="Step size for stress-test sliders in the dashboard risk tab.",
+    )
+    dashboard_stress_volatility_default_multiplier: float = Field(
+        default=2.0,
+        description="Default volatility shock multiplier for the dashboard risk tab.",
+    )
+    dashboard_stress_slippage_default_multiplier: float = Field(
+        default=3.0,
+        description="Default slippage shock multiplier for the dashboard risk tab.",
+    )
+    dashboard_stress_commission_default_multiplier: float = Field(
+        default=2.0,
+        description="Default commission shock multiplier for the dashboard risk tab.",
     )
 
     # ── Walk-Forward Validation (WFV) scheduling ──────────────────────────────
