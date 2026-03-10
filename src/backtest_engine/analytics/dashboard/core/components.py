@@ -151,7 +151,7 @@ def render_dataframe(
         The Streamlit event object if selection is enabled, else None.
     """
     kwargs = {
-        "width": "stretch",
+        "use_container_width": True,
         "hide_index": hide_index,
         "selection_mode": selection_mode,
         "on_select": on_select,

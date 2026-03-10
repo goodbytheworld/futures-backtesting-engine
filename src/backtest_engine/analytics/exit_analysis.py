@@ -39,9 +39,9 @@ def enrich_trades_with_exit_analytics(
     multiplier_cache: Dict[str, float] = {}
 
     try:
-        from src.backtest_engine.settings import get_settings
+        from src.backtest_engine.settings import BacktestSettings
 
-        settings = get_settings()
+        settings = BacktestSettings()
     except Exception:
         settings = None
     
@@ -55,91 +55,90 @@ def enrich_trades_with_exit_analytics(
         df[f"pnl_decay_{h}m"] = np.nan
     df["entry_volatility"] = np.nan
 
-    for idx, row in df.iterrows():
-        entry = row.get("entry_time")
-        exit_ = row.get("exit_time")
-        symbol = row.get("symbol")
-        direction = row.get("direction", "LONG")
-        sign = 1.0 if direction == "LONG" else -1.0
-        entry_price = row.get("entry_price")
-        qty_raw = row.get("quantity", 1.0)
-        try:
-            qty = abs(float(qty_raw))
-        except Exception:
-            qty = 1.0
-        if pd.isna(qty) or qty <= 0:
-            qty = 1.0
-
-        multiplier = multiplier_cache.get(symbol, None)
-        if multiplier is None:
-            multiplier = 1.0
-            if settings is not None:
-                try:
-                    spec = settings.get_instrument_spec(symbol)
-                    multiplier = float(spec.get("multiplier", 1.0))
-                except Exception:
-                    multiplier = 1.0
-            multiplier_cache[symbol] = multiplier
-        
-        # Determine data map key. Portfolio uses (slot_id, symbol).
-        slot_id = row.get("slot_id", None)
-        
+    # Group by symbol to pre-calculate volatility and handle lookups efficiently
+    for (slot_id, symbol), group in df.groupby(["slot_id", "symbol"], dropna=False):
+        # Determine data map key
         df_sym = data_map.get((slot_id, symbol)) if slot_id is not None else None
         if df_sym is None or df_sym.empty:
             df_sym = data_map.get(symbol)
-                
-        if df_sym is None or df_sym.empty or pd.isna(entry) or pd.isna(exit_) or pd.isna(entry_price):
+            
+        if df_sym is None or df_sym.empty:
             continue
             
-        df.at[idx, "holding_time"] = exit_ - entry
-        
-        # Round trip costs to deduct from hypothetical PnLs
-        comm = row.get("commission", 0.0)
-        slip = row.get("slippage", 0.0)
-        costs = (0.0 if pd.isna(comm) else float(comm)) + (0.0 if pd.isna(slip) else float(slip))
-        
-        # MFE / MAE
-        try:
-            trade_bars = df_sym.loc[entry:exit_]
-            if not trade_bars.empty:
-                max_p = trade_bars["high"].max()
-                min_p = trade_bars["low"].min()
-                
-                if direction == "LONG":
-                    mfe = (max_p - entry_price) * qty * multiplier
-                    mae = (min_p - entry_price) * qty * multiplier
-                else:
-                    mfe = (entry_price - min_p) * qty * multiplier
-                    mae = (entry_price - max_p) * qty * multiplier
-                    
-                df.at[idx, "mfe"] = float(mfe if mfe > 0 else 0.0)
-                df.at[idx, "mae"] = float(mae if mae < 0 else 0.0)
-        except Exception:
-            pass
-            
-        # Entry Volatility (14-period C2C on the underlying)
-        try:
-            locs = df_sym.index.get_indexer([entry], method="pad")
-            if len(locs) > 0 and locs[0] >= 14:
-                entry_idx = locs[0]
-                window = df_sym.iloc[entry_idx - 14 : entry_idx + 1]
-                vol = window["close"].pct_change().std()
-                df.at[idx, "entry_volatility"] = float(vol)
-        except Exception:
-            pass
+        # Ensure monotonic index for searchsorted
+        if not df_sym.index.is_monotonic_increasing:
+            df_sym = df_sym.sort_index()
 
-        # PnL Decay (Forward PnL)
-        for minutes in horizons:
-            target_time = entry + pd.Timedelta(minutes=minutes)
-            col_name = f"pnl_decay_{minutes}m"
+        # Pre-calculate rolling volatility (14-period C2C)
+        # We handle this once per symbol/dataframe
+        try:
+            rets = df_sym["close"].pct_change()
+            rolling_vol = rets.rolling(window=14).std()
+        except Exception:
+            rolling_vol = pd.Series(np.nan, index=df_sym.index)
+
+        # Pre-cache index for searchsorted
+        idx_array = df_sym.index.values
+
+        for idx in group.index:
+            row = df.loc[idx]
+            entry = row.get("entry_time")
+            exit_ = row.get("exit_time")
+            entry_price = row.get("entry_price")
+            direction = row.get("direction", "LONG")
+            sign = 1.0 if direction == "LONG" else -1.0
+            qty = abs(float(row.get("quantity", 1.0)))
+            multiplier = multiplier_cache.get(symbol, 1.0)
             
+            if pd.isna(entry) or pd.isna(exit_) or pd.isna(entry_price):
+                continue
+                
+            df.at[idx, "holding_time"] = exit_ - entry
+            
+            # Round trip costs
+            comm = row.get("commission", 0.0)
+            slip = row.get("slippage", 0.0)
+            costs = (0.0 if pd.isna(comm) else float(comm)) + (0.0 if pd.isna(slip) else float(slip))
+            
+            # MFE / MAE (Slicing is generally fast enough if done efficiently)
             try:
-                locs = df_sym.index.get_indexer([target_time], method="pad")
-                if len(locs) > 0 and locs[0] >= 0:
-                    hypo_price = df_sym.iloc[locs[0]]["close"]
-                    hypo_gross = sign * (hypo_price - entry_price) * qty * multiplier
-                    df.at[idx, col_name] = float(hypo_gross - costs)
+                trade_bars = df_sym.loc[entry:exit_]
+                if not trade_bars.empty:
+                    max_p = trade_bars["high"].max()
+                    min_p = trade_bars["low"].min()
+                    
+                    if direction == "LONG":
+                        mfe = (max_p - entry_price) * qty * multiplier
+                        mae = (min_p - entry_price) * qty * multiplier
+                    else:
+                        mfe = (entry_price - min_p) * qty * multiplier
+                        mae = (entry_price - max_p) * qty * multiplier
+                        
+                    df.at[idx, "mfe"] = float(mfe if mfe > 0 else 0.0)
+                    df.at[idx, "mae"] = float(mae if mae < 0 else 0.0)
             except Exception:
                 pass
-            
+
+            # Entry Volatility (Calculated from pre-cached rolling_vol)
+            try:
+                # searchsorted with side='right' and minus 1 mimics method='pad'
+                pos = np.searchsorted(idx_array, entry, side='right') - 1
+                if pos >= 0:
+                    df.at[idx, "entry_volatility"] = float(rolling_vol.iloc[pos])
+            except Exception:
+                pass
+
+            # PnL Decay (Forward PnL)
+            for minutes in horizons:
+                target_time = entry + pd.Timedelta(minutes=minutes)
+                col_name = f"pnl_decay_{minutes}m"
+                try:
+                    pos = np.searchsorted(idx_array, target_time, side='right') - 1
+                    if pos >= 0:
+                        hypo_price = df_sym.iloc[pos]["close"]
+                        hypo_gross = sign * (hypo_price - entry_price) * qty * multiplier
+                        df.at[idx, col_name] = float(hypo_gross - costs)
+                except Exception:
+                    pass
+    
     return df

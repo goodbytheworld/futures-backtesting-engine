@@ -88,12 +88,6 @@ class Settings(BaseSettings):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         return self.cache_dir
 
-# Singleton Access
-_settings = None
-def get_settings() -> Settings:
-    global _settings
-    if _settings is None: _settings = Settings()
-    return _settings
 ```
 
 ## 4. Data Layer Pattern (`data_lake.py`)
@@ -106,12 +100,12 @@ def get_settings() -> Settings:
 ```python
 import pandas as pd
 from datetime import datetime, timedelta
-from .settings import get_settings
+from .settings import Settings
 from .data_fetcher import DataFetcher # External class wrapping CCXT
 
 class DataLake:
-    def __init__(self):
-        self.settings = get_settings()
+    def __init__(self, settings: Settings):
+        self.settings = settings
         self.fetcher = DataFetcher()
 
     def load_or_fetch(self, symbol: str, lookback_days: int = 1000) -> pd.DataFrame:

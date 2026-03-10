@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from src.backtest_engine.settings import get_settings
+from src.backtest_engine.settings import BacktestSettings
 
 
 def save_backtest_results(
@@ -38,6 +38,7 @@ def save_backtest_results(
     metrics: Dict[str, float],
     benchmark: Optional[pd.Series] = None,
     data_map: Optional[Dict[str, pd.DataFrame]] = None,
+    settings: Optional[BacktestSettings] = None,
 ) -> Path:
     """
     Saves all backtest artifacts to the configured results directory.
@@ -61,7 +62,8 @@ def save_backtest_results(
     """
     from src.backtest_engine.analytics.exit_analysis import enrich_trades_with_exit_analytics
     
-    results_dir: Path = get_settings().get_results_path()
+    _settings = settings or BacktestSettings()
+    results_dir: Path = _settings.get_results_path()
 
     # Equity curve
     if not history.empty:
@@ -111,7 +113,7 @@ def save_backtest_results(
     )
 
     # Run type marker for the dashboard
-    base_results_dir = get_settings().base_dir / get_settings().results_dir
+    base_results_dir = _settings.base_dir / _settings.results_dir
     (base_results_dir / ".run_type").write_text("single", encoding="utf-8")
 
     print(f"[Exporter] Results saved → {results_dir}")

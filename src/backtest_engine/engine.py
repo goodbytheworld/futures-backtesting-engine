@@ -19,100 +19,11 @@ import numpy as np
 
 from .execution import ExecutionHandler, Fill, Order, Trade
 from .analytics import PerformanceMetrics, save_backtest_results
-from .settings import BacktestSettings, get_settings
+from .settings import BacktestSettings
 from src.data.data_lake import DataLake
 from src.data.bar_builder import BarBuilder
-
-class FastBar:
-    __slots__ = ['name', 'open', 'high', 'low', 'close', 'volume', '_dict']
-    def __init__(self, name, o, h, l, c, v):
-        self.name = name
-        self.open = o
-        self.high = h
-        self.low = l
-        self.close = c
-        self.volume = v
-        self._dict = {'open': o, 'high': h, 'low': l, 'close': c, 'volume': v}
-
-    def __getitem__(self, key):
-        return self._dict[key]
-
-    def get(self, key, default=None):
-        return self._dict.get(key, default)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Portfolio
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-class Portfolio:
-    """
-    Tracks cash, open positions, and portfolio value history.
-
-    Methodology:
-        Cash accounting uses full notional: buying a contract deducts
-        price * qty * multiplier from cash.  This is conservative (no
-        margin leverage) and makes capital usage transparent.
-    """
-
-    def __init__(self, initial_capital: float) -> None:
-        self.initial_capital = initial_capital
-        self.current_cash: float = initial_capital
-        self.positions: Dict[str, float] = {}   # Symbol → signed quantity
-        self.holdings_value: float = 0.0
-        self.total_value: float = initial_capital
-        self.history: List[Dict] = []
-
-    def update(self, fill: Optional[Fill], current_prices: Dict[str, float]) -> None:
-        """
-        Updates cash, positions, and total portfolio value.
-
-        Args:
-            fill: Newly executed fill; None for a mark-to-market only update.
-            current_prices: Latest close prices keyed by symbol.
-        """
-        if fill is not None:
-            symbol = fill.order.symbol
-            spec = get_settings().get_instrument_spec(symbol)
-            multiplier = spec["multiplier"]
-            notional = fill.fill_price * fill.order.quantity * multiplier
-
-            if fill.order.side == "BUY":
-                self.current_cash -= notional + fill.commission
-                self.positions[symbol] = self.positions.get(symbol, 0.0) + fill.order.quantity
-            else:  # SELL
-                self.current_cash += notional - fill.commission
-                self.positions[symbol] = self.positions.get(symbol, 0.0) - fill.order.quantity
-
-        # Mark-to-market open positions
-        self.holdings_value = 0.0
-        for sym, qty in self.positions.items():
-            if qty != 0 and sym in current_prices:
-                spec = get_settings().get_instrument_spec(sym)
-                self.holdings_value += qty * current_prices[sym] * spec["multiplier"]
-
-        self.total_value = self.current_cash + self.holdings_value
-
-    def record_snapshot(self, timestamp: datetime) -> None:
-        """Appends the current portfolio state to the history log."""
-        self.history.append(
-            {
-                "timestamp": timestamp,
-                "cash": self.current_cash,
-                "holdings": self.holdings_value,
-                "total_value": self.total_value,
-            }
-        )
-
-    def get_history_df(self) -> pd.DataFrame:
-        """Returns portfolio history as a DataFrame indexed by timestamp."""
-        if not self.history:
-            return pd.DataFrame()
-        df = pd.DataFrame(self.history)
-        df.set_index("timestamp", inplace=True)
-        return df
-
+from .fast_bar import FastBar
+from .portfolio import Portfolio
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # BacktestEngine
@@ -134,14 +45,16 @@ class BacktestEngine:
         settings: Optional[BacktestSettings] = None,
         data: Optional[pd.DataFrame] = None,
     ) -> None:
-        self.settings = settings or get_settings()
+        if settings is None:
+            raise ValueError("BacktestSettings must be provided to BacktestEngine via Dependency Injection.")
+        self.settings = settings
         self.execution = ExecutionHandler(self.settings)
         self.analytics = PerformanceMetrics(self.settings.risk_free_rate)
-        self.data_lake = DataLake()
+        self.data_lake = DataLake(settings=self.settings)
 
         self.start_date = start_date
         self.end_date = end_date
-        self.portfolio = Portfolio(self.settings.initial_capital)
+        self.portfolio = Portfolio(self.settings)
         self.strategy = None
         
         # Inject pre-sliced data if provided (e.g., from WFO)
@@ -449,4 +362,5 @@ class BacktestEngine:
             metrics=metrics,
             benchmark=benchmark,
             data_map=dmap,
+            settings=self.settings,
         )

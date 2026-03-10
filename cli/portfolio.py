@@ -37,7 +37,7 @@ def run(config_path: str, launch_dashboard: bool = False) -> None:
         PortfolioConfig, StrategySlot,
     )
     from src.strategies.registry import get_strategy_class_by_name
-    from src.backtest_engine.settings import get_settings
+    from src.backtest_engine.settings import BacktestSettings
     from src.data.data_lake import DataLake
 
     cfg_path = Path(config_path)
@@ -49,7 +49,7 @@ def run(config_path: str, launch_dashboard: bool = False) -> None:
         raw = yaml.safe_load(fh)
 
     portfolio_cfg = raw.get("portfolio", {})
-    settings = get_settings()
+    settings = BacktestSettings()
 
     slots = []
     for slot_cfg in raw["strategies"]:
@@ -100,7 +100,9 @@ def run(config_path: str, launch_dashboard: bool = False) -> None:
         print(f"[Data] Example: python run.py --download {symbols_str}")
         sys.exit(1)
 
-    engine = PortfolioBacktestEngine(config)
+    from src.backtest_engine.settings import BacktestSettings
+    settings = BacktestSettings()
+    engine = PortfolioBacktestEngine(config, settings=settings)
     engine.run()
 
     # Load benchmark price series for reporting/dashboard

@@ -10,7 +10,7 @@ import pandas as pd
 
 from src.backtest_engine.portfolio_layer.execution.strategy_runner import StrategyRunner
 from src.backtest_engine.portfolio_layer.domain.contracts import PortfolioConfig, StrategySlot
-from src.backtest_engine.settings import get_settings
+from src.backtest_engine.settings import BacktestSettings
 
 
 class _AlwaysSell:
@@ -56,7 +56,7 @@ def _make_data() -> pd.DataFrame:
 class TestExitSignalMapping:
     def test_sell_from_flat_maps_to_minus_one(self):
         """SELL → direction -1.  The engine decides whether it's a reversal or exit."""
-        settings = get_settings()
+        settings = BacktestSettings()
         df = _make_data()
         config = _make_config(_AlwaysSell)
         data_map = {(0, "ES"): df}
@@ -70,7 +70,7 @@ class TestExitSignalMapping:
         assert signals[0].direction == -1
 
     def test_buy_maps_to_plus_one(self):
-        settings = get_settings()
+        settings = BacktestSettings()
         df = _make_data()
         config = _make_config(_AlwaysBuy)
         data_map = {(0, "ES"): df}
@@ -88,7 +88,7 @@ class TestExitSignalMapping:
             def __init__(self, engine): pass
             def on_bar(self, bar): return []
 
-        settings = get_settings()
+        settings = BacktestSettings()
         df = _make_data()
         config = _make_config(_Silent)
         data_map = {(0, "ES"): df}

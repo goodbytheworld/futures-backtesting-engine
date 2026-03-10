@@ -69,7 +69,7 @@ def run(strategy_name: str, settings: Any, launch_dashboard: bool = False) -> No
         print(f"[Data] Example: python run.py --download {settings.default_symbol}")
         sys.exit(1)
 
-    engine = BacktestEngine()
+    engine = BacktestEngine(settings=settings)
     engine.run(strategy_class)
     engine.show_results()
 

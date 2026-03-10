@@ -22,7 +22,7 @@ from typing import Optional, Dict
 import pandas as pd
 from ib_insync import IB, Future, util
 
-from ..backtest_engine.settings import get_settings, BacktestSettings as Settings
+from ..backtest_engine.settings import BacktestSettings as Settings
 
 
 class Timeframe(Enum):
@@ -51,14 +51,14 @@ class IBFetcher:
     All pacing limits and parameters come from settings.py.
     """
     
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Settings):
         """
         Initialize IB fetcher.
         
         Args:
-            settings: Optional settings override.
+            settings: Backtest settings instance.
         """
-        self.settings = settings or get_settings()
+        self.settings = settings
         self.ib = IB()
         self._connected = False
         self._request_count = 0

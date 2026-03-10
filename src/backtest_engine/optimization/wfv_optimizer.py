@@ -18,7 +18,7 @@ import math
 import optuna
 import optuna.logging
 
-from ..settings import BacktestSettings, get_settings
+from ..settings import BacktestSettings
 from .fold_generator import PurgedFoldGenerator
 from .optimizer import OptunaOptimizer
 from src.data.data_lake import DataLake
@@ -210,9 +210,11 @@ class WalkForwardOptimizer:
         self,
         settings: Optional[BacktestSettings] = None,
     ) -> None:
-        self.settings = settings or get_settings()
+        if settings is None:
+            raise ValueError("BacktestSettings must be provided to WalkForwardOptimizer.")
+        self.settings = settings
         self.base_optimizer = OptunaOptimizer(settings=self.settings)
-        self.data_lake = DataLake()
+        self.data_lake = DataLake(self.settings)
 
     def run(
         self,

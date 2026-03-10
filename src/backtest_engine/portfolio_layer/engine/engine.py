@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import pandas as pd
 
-from src.backtest_engine.settings import get_settings, BacktestSettings
+from src.backtest_engine.settings import BacktestSettings
 from src.backtest_engine.execution import Order
 from src.data.data_lake import DataLake
 
@@ -81,7 +81,9 @@ class PortfolioBacktestEngine:
         """
         config.validate()
         self.config     = config
-        self.settings   = settings or get_settings()
+        if settings is None:
+            raise ValueError("BacktestSettings must be provided via Dependency Injection.")
+        self.settings   = settings
         self.start_date = start_date
         self.end_date   = end_date
 

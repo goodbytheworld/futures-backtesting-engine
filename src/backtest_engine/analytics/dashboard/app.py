@@ -321,8 +321,8 @@ def main() -> None:
 
     # ── Settings (read-only, no engine import paths needed in Streamlit) ───────
     try:
-        from src.backtest_engine.settings import get_settings
-        _settings = get_settings()
+        from src.backtest_engine.settings import BacktestSettings
+        _settings = BacktestSettings()
         window_days: int  = _settings.rolling_sharpe_window_days
         risk_free_rate: float = float(_settings.risk_free_rate)
         instrument_specs: dict = _settings.instrument_specs

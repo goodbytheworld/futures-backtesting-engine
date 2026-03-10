@@ -9,7 +9,7 @@ Loaded from environment variables (prefix: QUANT_BACKTEST_) or .env file.
 from pathlib import Path
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,6 +47,7 @@ class BacktestSettings(BaseSettings):
     commission_rate: float = 2.5      # Per contract, in dollars
     max_slippage_ticks: int = 1       # Random slippage: uniform in [0, max]
     fixed_qty: int = 1                # Default number of contracts per signal
+    random_seed: int = 42             # Seed for reproducible slippage simulation
 
     # ── Trading hours (exchange time, HH:MM strings) ───────────────────────────
     use_trading_hours: bool = True               # Toggle to enable/disable trading session limits
@@ -63,6 +64,52 @@ class BacktestSettings(BaseSettings):
     # Remark: Setting any of these to None will disable the corresponding numerical protection.
     hl_lambda_min: Optional[float] = 1e-4       # Minimum mean-reverting speed (slope) to consider the series stationary
     hl_max_cap: Optional[float] = 500.0         # Hard cap limit for calculated Half-Life (preventing explosion to infinity)
+
+
+    # ── IB Fetcher ─────────────────────────────────────────────────────────────
+    ib_host: str = "127.0.0.1"
+    ib_port: int = 7497          # 7497 = TWS paper; 4002 = Gateway paper
+    ib_client_id: int = 1
+    ib_timeout: int = 30
+    max_historical_years: int = 2
+    delayed_data_minutes: int = 15
+    ib_use_rth: bool = False
+    # ── Cache Management ───────────────────────────────────────────────────────
+    max_cache_staleness_days: int = Field(
+        default=5,
+        description="Maximum allowed cache age in days for backtest runs.",
+    )
+
+    def get_ib_request_delay(self) -> float:
+        """Standard pacing delay to respect IB rate limits (~6 req/min)."""
+        return 11.0
+
+    # ── Dashboard Analytics ──────────────────────────────────────────────────
+    dashboard: "DashboardSettings" = Field(default_factory=lambda: DashboardSettings())
+
+    # ── Walk-Forward Validation (WFV) scheduling ──────────────────────────────
+    wfo_n_folds: int = 4             # Number of walk-forward folds
+    wfo_test_size_pct: float = 0.20  # Fraction of total data used per test fold
+    wfo_n_trials: int = 220          # Optuna trials per fold
+    wfo_max_parameters: int = 6      # Strict maximum limit for optimized variables
+
+    # Pruning / quality gates
+    wfo_prune_min_trades: int = 8         # Minimum trades for a trial to pass
+    wfo_prune_max_dd_pct: float = 35.0    # Max drawdown % before early pruning
+    wfo_prune_target_trades_mult: int = 3  # target_trades = min_trades * this
+
+    # ── Path helpers ───────────────────────────────────────────────────────────
+    def get_results_path(self) -> Path:
+        """Creates and returns the results directory path."""
+        path = self.base_dir / self.results_dir
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_cache_path(self) -> Path:
+        """Creates and returns the data cache directory path."""
+        path = self.base_dir / self.cache_dir
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     # ── Instrument specifications ──────────────────────────────────────────────
     instrument_specs: dict = Field(
@@ -98,40 +145,15 @@ class BacktestSettings(BaseSettings):
         """
         return self.instrument_specs.get(symbol, {"tick_size": 0.01, "multiplier": 1.0})
 
-    # ── IB Fetcher ─────────────────────────────────────────────────────────────
-    ib_host: str = "127.0.0.1"
-    ib_port: int = 7497          # 7497 = TWS paper; 4002 = Gateway paper
-    ib_client_id: int = 1
-    ib_timeout: int = 30
-    max_historical_years: int = 2
-    delayed_data_minutes: int = 15
-    ib_use_rth: bool = False
-    # ── Cache Management ───────────────────────────────────────────────────────
-    max_cache_staleness_days: int = Field(
-        default=5,
-        description="Maximum allowed cache age in days for backtest runs.",
-    )
 
-    def get_ib_request_delay(self) -> float:
-        """Standard pacing delay to respect IB rate limits (~6 req/min)."""
-        return 11.0
-
-    # ── Dashboard Analytics ──────────────────────────────────────────────────
+class DashboardSettings(BaseModel):
+    """
+    Settings specifically for the Streamlit analytics dashboard.
+    """
+    # ── 1. Rolling Metrics (Windows) ──────────────────────────────────────────
     rolling_sharpe_window_days: int = Field(
         default=90,
         description="Window in calendar days for rolling Sharpe calculation in the dashboard.",
-    )
-    dashboard_bars_per_day: float = Field(
-        default=13.0,
-        description="Trading bars per calendar day for annualisation (13 = 30-min session 06:30-13:00).",
-    )
-    dashboard_risk_var_primary_confidence: float = Field(
-        default=0.95,
-        description="Primary historical VaR / ES confidence level for the dashboard risk tab.",
-    )
-    dashboard_risk_var_tail_confidence: float = Field(
-        default=0.99,
-        description="Tail historical VaR / ES confidence level for the dashboard risk tab.",
     )
     dashboard_risk_rolling_var_window_days: int = Field(
         default=60,
@@ -149,6 +171,22 @@ class BacktestSettings(BaseSettings):
         default=100,
         description="Long rolling volatility window in trading days for the dashboard risk tab.",
     )
+
+    # ── 2. VaR & ES Calculations ──────────────────────────────────────────────
+    dashboard_risk_var_primary_confidence: float = Field(
+        default=0.95,
+        description="Primary historical VaR / ES confidence level for the dashboard risk tab.",
+    )
+    dashboard_risk_var_tail_confidence: float = Field(
+        default=0.99,
+        description="Tail historical VaR / ES confidence level for the dashboard risk tab.",
+    )
+    dashboard_bars_per_day: float = Field(
+        default=13.0,
+        description="Trading bars per calendar day for annualisation (13 = 30-min session 06:30-13:00).",
+    )
+
+    # ── 3. Stress Testing Configuration ───────────────────────────────────────
     dashboard_stress_slider_min_multiplier: float = Field(
         default=1.0,
         description="Minimum multiplier exposed by stress-test sliders in the dashboard risk tab.",
@@ -173,39 +211,3 @@ class BacktestSettings(BaseSettings):
         default=2.0,
         description="Default commission shock multiplier for the dashboard risk tab.",
     )
-
-    # ── Walk-Forward Validation (WFV) scheduling ──────────────────────────────
-    wfo_n_folds: int = 4             # Number of walk-forward folds
-    wfo_test_size_pct: float = 0.20  # Fraction of total data used per test fold
-    wfo_n_trials: int = 220          # Optuna trials per fold
-    wfo_max_parameters: int = 6      # Strict maximum limit for optimized variables
-
-    # Pruning / quality gates
-    wfo_prune_min_trades: int = 8         # Minimum trades for a trial to pass
-    wfo_prune_max_dd_pct: float = 35.0    # Max drawdown % before early pruning
-    wfo_prune_target_trades_mult: int = 3  # target_trades = min_trades * this
-
-    # ── Path helpers ───────────────────────────────────────────────────────────
-    def get_results_path(self) -> Path:
-        """Creates and returns the results directory path."""
-        path = self.base_dir / self.results_dir
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    def get_cache_path(self) -> Path:
-        """Creates and returns the data cache directory path."""
-        path = self.base_dir / self.cache_dir
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-
-# ── Singleton accessor ─────────────────────────────────────────────────────────
-_settings: Optional[BacktestSettings] = None
-
-
-def get_settings() -> BacktestSettings:
-    """Returns the singleton BacktestSettings instance (lazy initialisation)."""
-    global _settings
-    if _settings is None:
-        _settings = BacktestSettings()
-    return _settings

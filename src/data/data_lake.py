@@ -10,7 +10,7 @@ from typing import Optional, Dict, List, Tuple
 
 import pandas as pd
 
-from ..backtest_engine.settings import get_settings, BacktestSettings as Settings
+from ..backtest_engine.settings import BacktestSettings as Settings
 
 
 class DataLake:
@@ -21,14 +21,14 @@ class DataLake:
     For downloading, use IBFetcher directly.
     """
     
-    def __init__(self, settings: Optional[Settings] = None):
+    def __init__(self, settings: Settings):
         """
         Initialize data lake.
         
         Args:
-            settings: Optional settings override.
+            settings: Backtest settings instance.
         """
-        self.settings = settings or get_settings()
+        self.settings = settings
     
     def _get_cache_file(self, symbol: str, timeframe: str = "5m") -> Path:
         """Get path to cache file for symbol and timeframe."""

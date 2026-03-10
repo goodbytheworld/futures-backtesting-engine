@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 from datetime import datetime, timedelta
 from src.backtest_engine.engine import BacktestEngine
-from src.backtest_engine.settings import get_settings
+from src.backtest_engine.settings import BacktestSettings
 from src.strategies.sma_crossover import SmaCrossoverStrategy
 
 @pytest.fixture
@@ -22,7 +22,7 @@ def test_engine_runs_strategy_successfully(mock_data):
     # over a mocked slice of standard dataframe data
     # without crashing or referencing non-existent strategies.
     
-    settings = get_settings().model_copy()
+    settings = BacktestSettings()
     settings.default_symbol = "YM"
     settings.initial_capital = 100000.0
     

@@ -138,6 +138,7 @@ def test_circuit_breaker_max_drawdown():
         initial_capital=1000.0,
         max_drawdown_pct=0.20 # 20% max DD
     )
+    settings.default_symbol = "NQ"
     settings.instrument_specs = {"NQ": {"tick_size": 1.0, "multiplier": 10.0}}
     
     engine = BacktestEngine(settings=settings, data=data)

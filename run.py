@@ -103,8 +103,8 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # ── Mode: data download ───────────────────────────────────────────────────
-    from src.backtest_engine.settings import get_settings
-    settings = get_settings()
+    from src.backtest_engine.settings import BacktestSettings
+    settings = BacktestSettings()
 
     if args.download:
         from src.data import IBFetcher

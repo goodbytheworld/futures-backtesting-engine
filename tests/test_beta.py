@@ -65,4 +65,5 @@ def debug_beta():
                 print(f"  Avg Inst Ret: {np.mean(x):.6f}")
                 print(f"  Var Inst Ret: {np.var(x):.6f}")
 
-debug_beta()
+if __name__ == "__main__":
+    debug_beta()

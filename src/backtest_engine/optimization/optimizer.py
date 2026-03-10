@@ -13,7 +13,7 @@ import pandas as pd
 from typing import Dict, Any, Optional, Type
 
 from ..engine import BacktestEngine
-from ..settings import BacktestSettings, get_settings
+from ..settings import BacktestSettings
 from .validation import Validator, ValidationException
 from .objective import objective_score
 
@@ -54,7 +54,9 @@ class OptunaOptimizer:
         Args:
             settings: Optional settings override; defaults to singleton.
         """
-        self.settings = settings or get_settings()
+        if settings is None:
+            raise ValueError("BacktestSettings must be provided to OptunaOptimizer via Dependency Injection.")
+        self.settings = settings
 
     # ── Search space application ───────────────────────────────────────────────
 
@@ -130,7 +132,7 @@ class OptunaOptimizer:
             Dict with 'stats' sub-dict and 'engine' reference.
         """
         # Isolate parameters per trial by copying the settings singleton
-        s = get_settings().model_copy(update=params)
+        s = self.settings.model_copy(update=params)
 
         engine = BacktestEngine(
             start_date=start_date,
@@ -201,7 +203,7 @@ class OptunaOptimizer:
         # Pre-flight validation of parameter count & names
         try:
             Validator.validate_params(
-                {k: None for k in search_space}, strategy_class.__name__
+                {k: None for k in search_space}, strategy_class.__name__, self.settings.wfo_max_parameters
             )
         except ValidationException as e:
             print(f"[OPT] Validation failed: {e}")
@@ -311,7 +313,7 @@ class OptunaOptimizer:
 
             # Pre-flight validation
             try:
-                Validator.validate_params(params, strategy_class.__name__)
+                Validator.validate_params(params, strategy_class.__name__, self.settings.wfo_max_parameters)
             except ValidationException as e:
                 raise optuna.TrialPruned(str(e))
 

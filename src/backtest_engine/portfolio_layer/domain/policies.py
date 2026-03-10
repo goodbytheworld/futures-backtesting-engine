@@ -15,12 +15,12 @@ from enum import Enum
 
 
 def _default_commission_rate() -> float:
-    from src.backtest_engine.settings import get_settings
-    return get_settings().commission_rate
+    from src.backtest_engine.settings import BacktestSettings
+    return BacktestSettings().commission_rate
 
 def _default_max_slippage_ticks() -> int:
-    from src.backtest_engine.settings import get_settings
-    return get_settings().max_slippage_ticks
+    from src.backtest_engine.settings import BacktestSettings
+    return BacktestSettings().max_slippage_ticks
 
 
 class RebalancePolicy(str, Enum):

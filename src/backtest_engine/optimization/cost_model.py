@@ -6,7 +6,7 @@ from BacktestSettings.
 """
 from typing import Optional
 
-from ..settings import BacktestSettings, get_settings
+from ..settings import BacktestSettings
 
 
 class CostModel:
@@ -32,7 +32,9 @@ class CostModel:
             settings: Optional settings override.
         """
         self.symbol = symbol
-        _settings = settings or get_settings()
+        if settings is None:
+            raise ValueError("BacktestSettings must be provided to CostModel.")
+        _settings = settings
         self.specs = _settings.get_instrument_spec(symbol)
         self.commission = _settings.commission_rate
 

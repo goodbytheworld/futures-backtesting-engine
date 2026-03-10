@@ -4,7 +4,6 @@ Strict engineering rules enforced here.
 """
 
 from typing import Dict, Any, List
-from ..settings import get_settings
 
 class ValidationException(Exception):
     pass
@@ -19,16 +18,15 @@ class Validator:
     ]
     
     @classmethod
-    def validate_params(cls, params: Dict[str, Any], strategy_name: str) -> None:
+    def validate_params(cls, params: Dict[str, Any], strategy_name: str, max_params: int = 6) -> None:
         """
         Validate trial parameters before backtest.
         
         Rules:
-        1. Max 6 parameters.
+        1. Max N parameters.
         2. No forbidden keywords (risk/money management).
         """
         # Rule 1: Dimensionality Control
-        max_params = get_settings().wfo_max_parameters
         if len(params) > max_params:
             raise ValidationException(
                 f"Strategy {strategy_name} has {len(params)} optimized parameters. "

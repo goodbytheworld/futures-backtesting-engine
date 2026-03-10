@@ -1,6 +1,6 @@
 import os
 
-root = r"C:\Users\Dans Rozenberg\Downloads\single_asset_backtester_private-main"
+root = r"C:\FuckingpyhonPartNumberZERO\Backtests\Backtesting ground\simple strategys"
 
 excl_dirs = {'.git', '__pycache__', 'venv', '.venv', 'data', 'results', 'logs', 'cache', '.vscode', '.idea', 'market_data', 'history', '.pytest_cache'}
 incl_exts = {'.py', '.md', '.txt', '.yaml', '.yml', '.json', '.toml', '.ini'}
