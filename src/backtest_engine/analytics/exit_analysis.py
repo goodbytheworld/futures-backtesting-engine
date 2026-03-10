@@ -6,7 +6,7 @@ Computes MFE, MAE, Holding Time, and PnL Decay by slicing OHLCV data.
 This runs once at the end of the backtest to offload dashboard computation.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
