@@ -1,186 +1,170 @@
 # Backtesting Platform
 
-A futures-focused backtesting platform for single-strategy research, portfolio backtests, walk-forward validation, and terminal-style analytics review.
+Futures-focused research platform for:
+
+- single-strategy backtests
+- walk-forward optimization
+- multi-strategy portfolio backtests
+- terminal-style analytics review via FastAPI
+
+The codebase is optimized for research workflows where no-lookahead execution, artifact reproducibility, and post-run analytics matter more than framework breadth.
+
+## What This Project Does
+
+- Runs single-asset event-driven backtests on cached OHLCV futures data.
+- Runs walk-forward validation through Optuna-based parameter search.
+- Runs portfolio backtests with shared capital, rebalancing, allocation, and slot-level execution.
+- Persists canonical artifacts for later inspection in the terminal UI.
+- Supports scenario reruns and portfolio-level analytics from saved artifacts.
+
+## Core Guarantees
+
+- No-lookahead contract: signal at `close[t]`, execution at `open[t+1]`.
+- Shared-capital accounting in the portfolio engine.
+- Artifact-first workflow: runs write reusable bundles to disk for later analysis.
+- Clear layer boundaries: CLI -> services -> engines/runtime.
 
 ## Quick Start
 
 ```bash
 git clone <repo-url>
 cd <repo-folder>
-
-pip install -r requirements.txt   # install all dependencies
-
-pytest tests/                     # verify the installation (should be all green)
-
-python run.py --portfolio-backtest --dashboard   # run a backtest and open the dashboard
-# Dashboard → http://127.0.0.1:8000
+pip install -r requirements.txt
+pytest tests/
 ```
 
-> Python 3.11+ recommended. No manual `PYTHONPATH` export needed — `pyproject.toml` configures it automatically for pytest, and `run.py` is always launched from the repo root.
+Python `3.11+` is recommended.
 
-## Prerequisites: Redis (for Stress Testing)
+`pyproject.toml` already configures pytest `pythonpath`, so no manual `PYTHONPATH` export is needed.
 
-The Stress Testing tab queues scenario reruns through Redis/RQ. Redis is **not** installed by `pip install -r requirements.txt` — it is a separate system binary.
+## Common Commands
 
-**Windows** — install once via winget, then restart your terminal:
+```bash
+# Download cached market data
+python run.py --download ES NQ YM RTY CL GC SI
+
+# Single backtest
+python run.py --backtest --strategy sma --symbol ES --tf 1h
+
+# Walk-forward optimization
+python run.py --wfo --strategy zscore --symbol ES --tf 1h
+
+# Portfolio backtest
+python run.py --portfolio-backtest
+python run.py --portfolio-backtest --portfolio-config src/backtest_engine/portfolio_layer/portfolio_config_example.yaml
+
+# Lightweight batch backtests with one combined Matplotlib popup
+python run.py batch --strategies sma zscore --symbol ES NQ --tf 1h 30m
+
+# Lightweight WFO batch sweep with verdict heatmap and candidate exports
+python run.py wfo-batch --strategies sma zscore --symbol ES --tf 1h
+
+# Launch terminal UI for the latest artifacts
+python run.py --dashboard
+
+# Run a backtest and open the UI after completion
+python run.py --portfolio-backtest --dashboard
+```
+
+## Redis Requirement
+
+The Stress Testing tab in the terminal UI uses Redis/RQ. The rest of the platform does not require Redis.
+
+Install Redis only if you want scenario queueing from the dashboard.
+
+Windows:
 
 ```bash
 winget install Redis.Redis
 ```
 
-**macOS:**
+macOS:
 
 ```bash
 brew install redis
 ```
 
-**Linux (Debian/Ubuntu):**
+Ubuntu/Debian:
 
 ```bash
 sudo apt install redis-server
 ```
 
-Once installed, `redis-server` will be available in PATH. The dashboard's Stress Testing tab has a **Start Redis** button that launches it automatically — no manual startup required.
+## Project Layout
 
-> If you skip this step, the dashboard still works for all analytics tabs. Only the Stress Testing queue will show "Offline" until Redis is started.
-
-## Problem Statement
-
-Standard backtesting frameworks frequently suffer from data leakage during parameter optimization and hidden look-ahead bias when generating trading signals. This inevitably leads to in-sample (IS) curve fitting and catastrophic drawdowns in live trading.
-The primary challenge is to construct a pipeline that structurally separates IS optimization from OOS validation while remaining computationally efficient for exhaustive parameter search spaces.
-
-## Methodology
-
-### 1. Model
-The engine is built on a hybrid architecture. It leverages fully vectorized pre-computation of indicators via `pandas`/`numpy` to achieve O(1) bar lookups, whilst maintaining a precise event-driven posture for position management. 
-Several regime filters are applied natively: Half-Life mean-reversion speed estimation, Augmented Dickey-Fuller (ADF) for macro stationarity, percentile-based volatility filters, and T-Stat trend estimation.
-
-### 2. FastBar Architecture
-To solve the computational overhead of iterative row-by-row `pandas.iloc` lookups, the engine's core loop was entirely refactored to use pre-extracted $C$-level `numpy` arrays. A lightweight `FastBar` python class acts as a proxy bridge, mapping array indices back to `pandas.Series` conventions (e.g., `bar["open"]`) for strategy compatibility, achieving **~5x faster event loops**.
-
-### 3. Calculation Algorithm
-To structurally prevent any data leakage, all signal matrices are strictly shifted by 1 bar:
-$$ Signal_t = F(Price_{0..t-1}) $$
-Positions are evaluated and executed explicitly at $t$, factoring in standard slippage models.
-
-### 4. Pipeline Architecture
-Raw OHLCV minute data is fetched via `IBFetcher` and cached locally as Parquet files. The strategy defines its parameter search space (using Optuna bounds), which is then processed by the `WalkForwardOptimizer` to perform rigorous statistical parameter selection.
-
-## Risk Controls / Validation
-
-| Control | Implementation |
-|---------|---------------|
-| Walk-Forward | 5-Fold Rolling Window (IS/OOS) |
-| No Look-Ahead | Engine automatically executes at **$OPEN_{T+1}$** for signals evaluated at **$CLOSE_T$** |
-| Stats Validation | T-Statistic, P-Value, and Deflated Sharpe Ratio (DSR) tracking |
-| Parameter Stability| Algorithmic penalties for inconsistent outcomes and Alpha Decay across OOS folds |
-
-The pipeline strictly isolates optimization folds. The objective function actively penalizes low trade counts and evaluates parameter robustness through metrics such as the Calmar Ratio, Sortino Ratio, and Deflated Sharpe Ratio, while proactively tracking strategy degradation (Alpha Decay).
-
-### Data Integrity
-Working with minute-level OHLCV requires robust cleaning:
-*   **Survivorship Bias**: Currently limited (acts on active continuous futures/single assets).
-*   **Corporate Actions**: Adjusted natively upstream (IBKR fetched data).
-*   **Missing Bar Handling**: Forward-fills close prices to prevent indicator corruption, forces $0 volume for inactive periods.
-*   **Outlier Detection**: IQR-based spike filtering during the initial Parquet build process.
-
-## Assumptions & Limitations
-
-- **Single Asset Focus:** The engine does not currently calculate portfolio-level correlations or cross-margining requirements.
-- **Slippage Model:** Uses a fixed slippage assumption, which does not account for order book depth sparsity during extreme volatility.
-- **Execution:** Assumes immediate market order execution without modeling microstructural queue positions.
-
-## Outputs & Diagnostics
-
-<img width="1591" height="796" alt="image" src="https://github.com/user-attachments/assets/e5e783b3-ce9d-470e-8185-620e1cedb90d" />
-
-> Displays the overall PnL curve, max drawdown underwater plots, and the core statistical metrics table. Analyzed: (`sma_crossover.py`)
-
-
-<img width="622" height="540" alt="image" src="https://github.com/user-attachments/assets/33cfaf5c-bb29-4502-a650-e3ad0fb034ee" />
-
-> Shows the rolling-window fold progression, out-of-sample parameter selection stability, and applications of the stability penalty. Optimized: (`sma_crossover.py`)
-
-
-## Computational Profile
-
-*Benchmark evaluated on Intel Core i7 / 8GB RAM / Python 3.11*
-
-Optimization on minute-level data over 2-year periods is heavily vectorized:
-*   **Optuna Budget**: 500 parameter trials per Fold
-*   **Single Trial Speed**: ~ 0.24 seconds
-*   **Average Fold Runtime**: ~ 124 seconds
-*   **Total WFV Execution**: ~ 10 minutes
-
-## Project Structure
-
-```bash
-├── README.md
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── MODULE_MAP.md
-│   └── agents.md
-├── cli/
-│   ├── single.py
-│   ├── portfolio.py
-│   └── wfo.py
-├── run.py
-├── requirements.txt
-├── tests/
-│   ├── README.md
-│   ├── regression/
-│   ├── unit/
-│   ├── test_engine_integration.py
-│   ├── test_invariants.py
-│   ├── test_kalman.py
-│   └── test_beta.py
-├── src/
-│   ├── backtest_engine/
-│   │   ├── settings.py
-│   │   ├── engine.py
-│   │   ├── execution.py
-│   │   ├── optimization/
-│   │   ├── analytics/
-│   │   │   ├── dashboard/
-│   │   │   └── terminal_ui/
-│   │   └── portfolio_layer/
-│   ├── strategies/
-│   │   ├── base.py
-│   │   ├── registry.py
-│   │   └── *.py
-│   └── data/
-│       └── data_lake.py
-└── TODO.md
+```text
+.
+|-- README.md
+|-- CONTRIBUTING.md
+|-- docs/
+|   |-- ARCHITECTURE.md
+|   |-- MODULE_MAP.md
+|   `-- agents.md
+|-- cli/
+|   |-- single.py
+|   |-- wfo.py
+|   |-- portfolio.py
+|   |-- batch.py
+|   `-- wfo_batch.py
+|-- run.py
+|-- tests/
+|   |-- README.md
+|   |-- unit/
+|   `-- regression/
+`-- src/
+    |-- data/
+    |-- strategies/
+    `-- backtest_engine/
+        |-- engine.py
+        |-- execution.py
+        |-- analytics/
+        |-- optimization/
+        |-- services/
+        |-- runtime/terminal_ui/
+        `-- portfolio_layer/
 ```
 
-## Usage
+## Architecture At A Glance
 
-```bash
-pip install -r requirements.txt
+- `run.py` parses CLI args and dispatches to `cli/`.
+- `cli/` is intentionally thin and delegates orchestration to `src/backtest_engine/services/`.
+- `src/backtest_engine/engine.py` is the single-asset execution engine.
+- `src/backtest_engine/portfolio_layer/engine/engine.py` is the portfolio event loop with shared capital and multi-slot execution.
+- `src/backtest_engine/runtime/terminal_ui/` is the active FastAPI analytics UI.
+- `src/backtest_engine/analytics/` contains artifact builders, reports, metrics, and shared analytics transforms.
 
-# Run a single standard backtest
-python run.py --backtest --strategy sma
+## Results And Artifacts
 
-# Run a portfolio backtest
-python run.py --portfolio-backtest --portfolio-config portfolio_config.yaml
+- Single runs write to `results/`.
+- Portfolio runs write to `results/portfolio/`.
+- Scenario reruns write to `results/scenarios/<scenario_id>/...`.
+- The terminal UI reads saved artifacts rather than requiring a rerun.
 
-# Launch the terminal dashboard for the latest artifacts
-python run.py --dashboard
+## Documentation Map
 
-# Run Walk-Forward Validation (WFO) optimization
-python run.py --wfo --strategy mean_rev
-```
+- [Architecture](docs/ARCHITECTURE.md) - layer boundaries, engine roles, artifact flow.
+- [Module Map](docs/MODULE_MAP.md) - quick reference for portfolio layer and entry points.
+- [Agent Context](docs/agents.md) - compact project context for LLMs and automation agents.
+- [Contributing Guide](CONTRIBUTING.md) - setup, workflow, tests, strategy additions, PR expectations.
+- [Analytics README](src/backtest_engine/analytics/README.md)
+- [Optimization README](src/backtest_engine/optimization/README.md)
+- [Portfolio Layer README](src/backtest_engine/portfolio_layer/README.md)
+- [Terminal UI README](src/backtest_engine/runtime/terminal_ui/README.md)
+- [Strategies README](src/strategies/README.md)
+- [Tests README](tests/README.md)
 
-## Outputs
+## Strategy Registry
 
-- Single runs write artifacts to `results/`.
-- Portfolio runs write artifacts to `results/portfolio/`.
-- Scenario reruns write namespaced artifacts under `results/scenarios/`.
-- The active web dashboard is the FastAPI terminal UI in `src/backtest_engine/runtime/terminal_ui/`.
+Strategies are exposed through `src/strategies/registry.py`.
 
-## Future Improvements
+Current canonical IDs:
 
-- [ ] Move to NautilusTrader for Ultra-High performance.
-- [ ] Tick-level orderbook replay integration.
-- [ ] Portfolio-level margin and correlation analysis.
-- [ ] Probability of bankruptcy estimation via Monte Carlo simulations.
+- `sma`
+- `mean_rev`
+- `zscore`
+- `sma_pullback`
+- `intraday_momentum`
+- `stat_level`
+- `ict_ob`
+
+Aliases such as `sma_crossover` and `mean_reversion` are also accepted by the CLI.

@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import numpy as np
+from tqdm import tqdm
 
 from src.backtest_engine.engine import BacktestEngine
 from src.backtest_engine.services.batch_models import BatchScenario, SingleBatchResult
@@ -94,22 +95,12 @@ def _render_progress_bar(
     start_time: float,
 ) -> None:
     """
-    Prints one in-place progress bar with elapsed time, ETA, and speed.
-
-    Args:
-        current: Number of completed scenarios.
-        total: Total scenario count.
-        width: Character width of the filled bar.
-        label: Short status label for the latest completed scenario.
-        start_time: Unix timestamp when the batch started (from time.monotonic()).
+    Legacy shim kept so that the single-scenario fast path still compiles.
+    The multi-scenario path now uses tqdm directly.
     """
-    safe_total = max(total, 1)
-    progress = current / safe_total
-    filled = int(width * progress)
-    bar = "#" * filled + "-" * (width - filled)
-
     elapsed = time.monotonic() - start_time
     avg_sec = elapsed / current if current > 0 else 0.0
+    safe_total = max(total, 1)
     remaining = avg_sec * (safe_total - current)
 
     def _fmt_t(secs: float) -> str:
@@ -117,8 +108,10 @@ def _render_progress_bar(
         return f"{m:02d}:{s:02d}"
 
     timing = f"[{_fmt_t(elapsed)}<{_fmt_t(remaining)}, {avg_sec:.2f}s/it]"
-    percent = f"{progress:3.0%}"
-    message = f"\r[Batch] {percent}|{bar}| {current}/{total} {label} {timing}".rstrip()
+    percent = f"{current / safe_total:3.0%}"
+    filled = int(width * current / safe_total)
+    bar = "█" * filled + "-" * (width - filled)
+    message = f"\r[Batch] {percent}|{bar}| {current}/{total} {label} {timing}"
     sys.stdout.write(message)
     sys.stdout.flush()
     if current >= total:
@@ -231,20 +224,26 @@ def run_batch_backtests(
     print("=" * 72)
 
     results: List[SingleBatchResult] = []
-    progress_width = int(settings.batch_progress_bar_width)
-    start_time = time.monotonic()
+
+    bar = tqdm(
+        total=len(scenarios),
+        desc="[Batch]",
+        unit="scenario",
+        ncols=80,
+        bar_format="{desc} {percentage:3.0f}%|{bar}| {n}/{total} {postfix} [{elapsed}<{remaining}, {rate_fmt}]",
+    )
 
     if len(scenarios) == 1:
         result = _run_batch_worker(scenarios[0], settings_payload)
         results.append(result)
-        _render_progress_bar(1, 1, progress_width, scenarios[0].legend_label, start_time)
+        bar.set_postfix_str(scenarios[0].legend_label)
+        bar.update(1)
     else:
         with ProcessPoolExecutor(max_workers=resolved_workers) as executor:
             futures = {
                 executor.submit(_run_batch_worker, scenario, settings_payload): scenario
                 for scenario in scenarios
             }
-            completed = 0
             for future in as_completed(futures):
                 scenario = futures[future]
                 try:
@@ -256,14 +255,10 @@ def run_batch_backtests(
                         error=str(exc),
                     )
                 results.append(result)
-                completed += 1
-                _render_progress_bar(
-                    completed,
-                    len(scenarios),
-                    progress_width,
-                    scenario.legend_label,
-                    start_time,
-                )
+                bar.set_postfix_str(scenario.legend_label)
+                bar.update(1)
+
+    bar.close()
 
     successful_results = [
         result for result in results if result.status == "completed" and result.log_equity

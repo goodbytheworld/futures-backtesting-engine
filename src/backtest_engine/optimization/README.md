@@ -1,12 +1,32 @@
 # Optimization Layer
 
-This directory houses the Research-Grade Strategy Optimization and Walk-Forward Validation (WFV) suite. It strictly separates standard parameter tuning from robust, out-of-sample temporal validation to prevent data leakage and curve-fitting.
+This package contains parameter search and walk-forward validation logic for single-strategy research.
 
-## Core Components
+## Main Modules
 
-- **`optimizer.py`**: The standard Bayesian Optimization Engine (`OptunaOptimizer`). It runs the `BacktestEngine` repeatedly using Optuna's sophisticated TPE (Tree-structured Parzen Estimator) sampler to maximize a risk-adjusted objective score.
-- **`wfv_optimizer.py`**: The orchestrator for Walk-Forward Validation (`WalkForwardOptimizer`). Generates rolling or expanding date boundaries, optimizes aggressively In-Sample (IS), and evaluates blindly Out-Of-Sample (OOS). Contains "Skeptic" analytics like Deflated Sharpe Ratio (DSR) and performance degradation analysis to penalize overfit strategies.
-- **`fold_generator.py`**: Implements Purged & Embargoed Cross-Validation splits (`PurgedFoldGenerator`). Critical for time-series finance to ensure training and testing periods do not overlap or share correlated data points.
-- **`objective.py`**: The composite scoring function optimizer targets (`objective_score`). Blends Sharpe and Sortino ratios with soft penalties for insufficient trade counts (activity) or excessive drawdowns (stability).
-- **`cost_model.py`**: Connects optimization to real-world friction (`CostModel`). Retrieves symbol-specific configurations from `settings.py` to calculate accurate round-trip transaction costs (commissions) and slippage estimates during high-speed tuning.
-- **`validation.py`**: Pre-flight validation gatekeeper (`Validator`). Enforces strict engineering rules before optimization begins (e.g., maximum parameter limits, blocking optimization of risk/position-sizing inputs).
+
+| Module              | Purpose                                                                      |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `optimizer.py`      | Optuna-driven parameter optimization for a single strategy                   |
+| `wfv_optimizer.py`  | walk-forward orchestration over repeated in-sample and out-of-sample windows |
+| `fold_generator.py` | rolling/purged fold construction for time-series validation                  |
+| `objective.py`      | composite optimization score and penalties                                   |
+| `cost_model.py`     | execution-friction model used during optimization                            |
+| `validation.py`     | guardrails for valid optimization inputs                                     |
+
+
+## Scope
+
+This layer is about selecting and validating strategy parameters. It is not the place for:
+
+- CLI parsing
+- artifact browsing
+- dashboard route logic
+- portfolio allocation logic
+
+## Engine Relationship
+
+- optimization runs ultimately evaluate strategies through `BacktestEngine`
+- walk-forward orchestration is triggered from `services/wfo_run_service.py`
+- cache validation and strategy loading happen before entering this package
+

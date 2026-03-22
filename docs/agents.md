@@ -1,107 +1,117 @@
-# Project Setup & Context for AI Agents (LLMs)
+# Agent Context
 
-**Objective Name:** Quant Backtesting Engine
-**Audience:** Artificial Intelligence Agents (LLMs) contributing to or maintaining the codebase.
-**Status:** MANDATORY READING BEFORE MODIFYING CODE.
+Compact project context for LLMs and automation agents working in this repository.
 
----
+## Mission
 
-## 1. Project Purpose
-This is a Python-based, Institutional-Grade backtesting platform. It supports:
-1.  **Single-Asset Backtesting**: Individual strategy runs on single instruments.
-2.  **Walk-Forward Optimization (WFO)**: Systematic parameter robustness testing.
-3.  **Multi-Strategy Portfolio Backtesting**: Running multiple strategies concurrently with shared capital, dynamic allocation, and risk management.
-4.  **Analytics & Visualization**: A FastAPI terminal dashboard (`src/backtest_engine/runtime/terminal_ui/`) for PnL, risk, and scenario analysis. Launch via `python run.py --dashboard`.
+This repository is a research-oriented futures backtesting platform with three main workflows:
 
----
+- single-strategy backtests
+- walk-forward optimization
+- portfolio backtests with shared capital
 
-## 2. Core Architecture & Modules
+The active analytics UI is the FastAPI terminal UI in `src/backtest_engine/runtime/terminal_ui/`.
 
-The entry point is **`run.py`** at the project root. It purely parses arguments and dispatches to handlers in `cli/`.
+## Start Here
 
-*   **`cli/`**: CLI handlers (`single.py`, `wfo.py`, `portfolio.py`).
-*   **`src/backtest_engine/`**: The core execution engine.
-    *   `settings.py`: `BacktestSettings` (pydantic-settings, `.env` file driven). **All magic numbers go here.**
-    *   `engine.py` & `execution.py`: Single-asset engine and order handling.
-    *   `portfolio_layer/`: Multi-asset engine.
-        *   `domain/`: Pure data structures (`PortfolioConfig`, `StrategySlot`, `TargetPosition`).
-        *   `allocation/`: Capital sizing (`Allocator`).
-        *   `scheduling/`: Rebalance gating (Intrabar, Daily).
-        *   `execution/`: Fills and ledger (`PortfolioBook`, `StrategyRunner`).
-        *   `engine/`: `PortfolioBacktestEngine` containing the main event loop.
-        *   `reporting/`: Result serialization (Parquet, JSON).
-    *   `analytics/`: Post-execution analytics layers. Contains `shared/` with pure transforms and risk models.
-    *   `runtime/terminal_ui/`: The active FastAPI dashboard and server runtime.
-*   **`src/strategies/`**: Trading logic.
-    *   All strategies inherit from `BaseStrategy` (`base.py`).
-    *   **Registry**: `registry.py` is the central mapping for CLI/YAML IDs (e.g., `"zscore"`) to class paths.
-*   **`data/`**: Data ingestion (`DataLake` -> OHLCV DataFrames, IB Fetcher).
+Read these first:
 
----
+1. `README.md`
+2. `docs/ARCHITECTURE.md`
+3. `docs/MODULE_MAP.md`
+4. `dev_context/CLEAN_CODE_MCP.md`
 
-## 3. Critical System Invariants
+Do not read unrelated files in `dev_context/` unless the task explicitly requires them.
 
-1.  **No-Lookahead Guarantee**: A signal is generated at `close[t]`. The resulting order is queued and MUST fill at `open[t+1]`.
-2.  **Shared-Capital Equation**: `total_equity == cash + Σ(qty × last_known_price × multiplier)`.
-3.  **Settings Layering**: `.env` variables override defaults -> `BacktestSettings` reads them -> `portfolio_config.yaml` can override them per-run.
+## Non-Negotiable Invariants
 
----
+### Execution timing
 
-## 4. Coding Standards (CLEAN CODE MCP)
+- strategy observes `bar[t]`
+- generated orders fill at `open[t+1]`
+- do not introduce lookahead through manual shifts or future-index access
 
-As an AI modifying this codebase, you **MUST** strictly adhere to these rules:
+### Layering
 
-### A. Language & Tone
-*   **ENGLISH ONLY**. No Cyrillic or other languages in comments, variables, or docs.
+- `run.py` parses args
+- `cli/` adapts args to services
+- `services/` orchestrates use cases
+- engines execute bar-by-bar logic
+- `runtime/terminal_ui/` serves artifacts and analytics views
 
-### B. Type Safety
-*   All function signatures MUST have explicit type hints (`from typing import List, Dict, Optional`, etc.).
-*   Use `pydantic` or `dataclasses` for complex data structures instead of raw dictionaries where possible.
+### Settings
 
-### C. No Magic Numbers
-*   **NEVER hardcode parameters** (windows, thresholds, rates) in logic files.
-*   Extract them to `src/backtest_engine/settings.py` so they can be injected/configured.
+- shared runtime configuration belongs in `src/backtest_engine/settings.py`
+- do not scatter new magic numbers through engines or services
 
-### D. Resilient Error Handling
-*   **For Backtests**: Log non-critical failures and continue. Do not crash the entire backtest over one bad bar if possible.
-*   **For Live/Critical**: Use circuit breakers (e.g., if a model fails to fit 5 times, stop trading).
+## Engine Split
 
-### E. Documentation (Google Style)
-Every class and public method must have a docstring explaining **Why (Methodology)**, not just *What*.
+There are two different engines:
 
-**Template Example**:
+### `src/backtest_engine/engine.py`
+
+- `BacktestEngine`
+- single strategy, single primary symbol
+- used by standard backtests and by WFO
+
+### `src/backtest_engine/portfolio_layer/engine/engine.py`
+
+- `PortfolioBacktestEngine`
+- multiple slots, multiple symbols, shared capital, allocator, scheduler, portfolio book
+- used by portfolio runs and scenario reruns
+
+If a change depends on allocation, rebalancing, slot coordination, or unified timelines, it belongs in the portfolio layer, not in the single engine.
+
+## Active Runtime
+
+The active UI/runtime is `src/backtest_engine/runtime/terminal_ui/`.
+
+Rules:
+
+- `service.py` is the runtime-facing data and artifact layer
+- `routes_*.py` should stay thin
+- builders should return payloads, not perform app-level orchestration
+- templates and static assets are terminal UI specific
+
+Do not reintroduce legacy dashboard assumptions into docs or code.
+
+## Strategy Contract
+
+Strategies still follow a legacy contract:
+
 ```python
-def calculate_target(self, signal: StrategySignal, equity: float) -> TargetPosition:
-    """
-    Computes to the target position size for a strategy signal.
-    
-    Methodology:
-    Uses standard volatility targeting based on risk parity. The target
-    notional is scaled by the inverse of the asset's recent volatility.
-    
-    Args:
-        signal: Generated signal containing direction and conviction.
-        equity: Current total portfolio equity allocated to this slot.
-        
-    Returns:
-        TargetPosition object with the desired contract quantity.
-    """
+class BaseStrategy:
+    def __init__(self, engine): ...
 ```
 
-### F. Analytics & Dashboard Rule
-The active dashboard is the **terminal UI** (`src/backtest_engine/runtime/terminal_ui/`).
+Implications:
 
-*   `service.py` — pure data-loading and bundle-inspection layer. No I/O side-effects, no HTTP concerns. Fully unit-testable.
-*   `chart_builders.py` / `risk_builders.py` — pure Plotly payload builders. Return dicts; no HTTP dependencies.
-*   `routes_partials.py` / `routes_charts.py` / `routes_operations.py` — FastAPI route handlers. Thin: call service/builders, render Jinja2 templates or return JSON.
-*   `templates/` — Jinja2 HTML templates for server-side rendering.
+- indicators should be precomputed in `__init__`
+- `on_bar()` should stay lightweight
+- portfolio mode uses adapters to support this contract
 
-Legacy Streamlit dashboard has been removed. All shared models and pure transforms reside in `analytics/shared/`.
+## Where To Put Changes
 
----
+- new CLI mode or CLI adapter behavior -> `run.py`, `cli/`
+- reusable workflow logic -> `src/backtest_engine/services/`
+- execution semantics -> engine modules
+- artifacts, metrics, report serialization -> `src/backtest_engine/analytics/`
+- strategy implementations -> `src/strategies/`
+- UI payloads or routes -> `src/backtest_engine/runtime/terminal_ui/`
+- cross-cutting repo docs -> `README.md`, `CONTRIBUTING.md`, `docs/`
 
-## 5. Development Workflow
+## Change Discipline
 
-1.  **Add a Strategy**: Implement in `src/strategies/`, then register in `src/strategies/registry.py`.
-2.  **Add a Metric**: Compute in `transforms.py`, visualize in `charts.py`, render in `app.py`.
-3.  **Run Tests**: Ensure unit, integration, and regression tests pass when touching `portfolio_layer` or `engine.py`.
+- Prefer small, local changes.
+- Add tests when behavior changes.
+- Update nearby docs when public behavior or module ownership changes.
+- Keep comments and docs in English.
+- Avoid speculative abstractions.
+
+## Useful Local References
+
+- `src/strategies/README.md`
+- `src/backtest_engine/analytics/README.md`
+- `src/backtest_engine/optimization/README.md`
+- `src/backtest_engine/portfolio_layer/README.md`
+- `tests/README.md`

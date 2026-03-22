@@ -1,116 +1,111 @@
-# Module Map — Portfolio Layer
+# Module Map
 
-One-screen reference per subpackage: inputs, outputs, and dependencies.
+Quick reference for the modules contributors are most likely to touch.
 
----
+## Portfolio Layer
 
-## `domain/`
-**Purpose:** Pure data structures — no I/O, no computation.
+### `domain/`
 
-| Module | Class | In | Out |
-|---|---|---|---|
-| `contracts.py` | `PortfolioConfig` | YAML (via cli/) | config object |
-|  | `StrategySlot` | YAML slot entries | slot object |
-| `signals.py` | `StrategySignal` | StrategyRunner | direction + metadata |
-|  | `TargetPosition` | Allocator | target qty |
-| `policies.py` | `RebalancePolicy` | config string | enum value |
-|  | `ExecutionPolicy` | PortfolioConfig | commission + slippage params |
+Pure contracts and enums.
 
-**Dependencies:** `dataclasses`, `enum`, `BacktestSettings` (lazy import for default)
-
----
-
-## `adapters/`
-**Purpose:** Bridge legacy single-asset `BaseStrategy` to portfolio engine.
-
-| Module | Class | In | Out |
-|---|---|---|---|
-| `legacy_strategy_adapter.py` | `LegacyStrategyAdapter.build()` | strategy_class, data, symbol, settings, params | instantiated strategy |
-
-**Key limitation:** `strategy.engine.portfolio.positions` is a per-instance
-mock dict, not the real `PortfolioBook`.  See module docstring for full limitations.
-
-**Dependencies:** `_MockEngine`, `_MockPortfolio`, `_PatchedSettings` (all internal)
-
----
-
-## `scheduling/`
-**Purpose:** Rebalance gate — decides whether Allocator runs on a given bar.
-
-| Class | Fires on | Use case |
+| Module | Main Types | Purpose |
 |---|---|---|
-| `IntrabarScheduler` | Every bar | Intraday strategies |
-| `DailyScheduler` | First bar of each calendar day | Daily signal strategies |
+| `contracts.py` | `PortfolioConfig`, `StrategySlot` | validated portfolio configuration |
+| `signals.py` | `StrategySignal`, `TargetPosition` | strategy output and allocator target types |
+| `policies.py` | `RebalancePolicy`, `ExecutionPolicy` | portfolio policy enums and execution settings |
 
-**Factory:** `make_scheduler(frequency: str) → BaseScheduler`
+### `adapters/`
 
-**Dependencies:** stdlib only
-
----
-
-## `allocation/`
-**Purpose:** Weight-based capital sizing.
-
-| Method | In | Out |
-|---|---|---|
-| `Allocator.compute_targets()` | `List[StrategySignal]`, total_equity, prices, specs | `List[TargetPosition]` |
-
-**Formula:** `floor(equity × weight × leverage / (price × multiplier)) × direction`
-
-**Dependencies:** `domain/contracts.py`, `domain/signals.py`
-
----
-
-## `execution/`
-**Purpose:** Fills and portfolio ledger.
-
-| Module | Class | Key method | Effect |
-|---|---|---|---|
-| `portfolio_book.py` | `PortfolioBook` | `apply_fill()` | Updates cash + positions |
-|  | | `mark_to_market()` | Recomputes equity |
-|  | | `record_snapshot()` | Appends to history |
-| `strategy_runner.py` | `StrategyRunner` | `collect_signals()` | Calls on_bar(), returns signals |
-
-**Dependencies:** `adapters/legacy_strategy_adapter.py`, `domain/`, `src.backtest_engine.execution.Order`
-
----
-
-## `engine/`
-**Purpose:** Event loop orchestration.
-
-| Method | Steps |
+| Module | Purpose |
 |---|---|
-| `PortfolioBacktestEngine.run()` | Load data → union timeline → A/B/C/D/E/F steps per bar |
-| `show_results()` | PerformanceMetrics + save_portfolio_results() |
+| `legacy_strategy_adapter.py` | adapts `BaseStrategy(engine)` strategies into the portfolio engine |
 
-**Dependencies:** all other subpackages, `DataLake`, `ExecutionHandler`, `BacktestSettings`
+### `scheduling/`
 
----
-
-## `reporting/`
-**Purpose:** Serialize 5 artifacts to `results/portfolio/`.
-
-| Artifact | Description |
+| Module | Purpose |
 |---|---|
-| `history.parquet` | Bar-by-bar equity curve |
-| `exposure.parquet` | Gross / net holdings per bar |
-| `strategy_pnl_daily.parquet` | Per-slot daily PnL |
-| `trades.parquet` | All completed round-trip trades |
-| `metrics.json` | Scalar performance metrics |
-| `report.txt` | Human-readable terminal output |
+| `scheduler.py` | rebalance cadence decisions such as intrabar and daily scheduling |
 
-**Dependencies:** `pandas`, `json`, stdlib
+### `allocation/`
 
----
+| Module | Purpose |
+|---|---|
+| `allocator.py` | converts signals and equity into target contract sizes |
 
-## `cli/`
-**Purpose:** CLI command handlers (one file per mode).
+### `execution/`
 
-| Module | Flag | Imports |
+| Module | Purpose |
+|---|---|
+| `portfolio_book.py` | shared ledger, cash, positions, equity history |
+| `strategy_runner.py` | drives slot-local strategy instances and collects signals |
+
+### `engine/`
+
+| Module | Purpose |
+|---|---|
+| `engine.py` | `PortfolioBacktestEngine`, the portfolio event loop |
+
+### `reporting/`
+
+| Module | Purpose |
+|---|---|
+| `results.py` | persists portfolio artifacts and reports |
+
+## Top-Level Backtest Engine
+
+| Module | Purpose |
+|---|---|
+| `src/backtest_engine/engine.py` | single-asset event loop |
+| `src/backtest_engine/execution.py` | order, fill, trade, and execution handling |
+| `src/backtest_engine/portfolio.py` | single-engine portfolio/accounting object |
+| `src/backtest_engine/settings.py` | runtime settings and instrument specs |
+
+## Services Layer
+
+These modules are the public orchestration boundary between adapters and engines.
+
+| Module | Purpose |
+|---|---|
+| `services/single_run_service.py` | single-run workflow |
+| `services/wfo_run_service.py` | walk-forward workflow |
+| `services/portfolio_run_service.py` | portfolio workflow and scenario metadata assembly |
+| `services/batch_run_service.py` | multi-scenario batch runs |
+| `services/wfo_batch_run_service.py` | multi-scenario WFO batch runs |
+| `services/artifact_service.py` | artifact discovery, bundle inspection, loading |
+| `services/scenario_job_service.py` | dashboard scenario job preparation |
+| `services/scenario_runner_service.py` | scenario rerun execution helpers |
+| `services/paths.py` | results path resolution |
+
+## CLI Adapters
+
+These should stay thin.
+
+| Module | Trigger | Delegates To |
 |---|---|---|
-| `cli/single.py` | `--backtest` | `BacktestEngine` |
-| `cli/wfo.py` | `--wfo` | `WalkForwardOptimizer` |
-| `cli/portfolio.py` | `--portfolio-backtest` | `PortfolioBacktestEngine`, `PortfolioConfig` |
+| `cli/single.py` | `--backtest` | `services/single_run_service.py` |
+| `cli/wfo.py` | `--wfo` | `services/wfo_run_service.py` |
+| `cli/portfolio.py` | `--portfolio-backtest` | `services/portfolio_run_service.py` |
+| `cli/batch.py` | `batch` | `services/batch_run_service.py` |
+| `cli/wfo_batch.py` | `wfo-batch` | `services/wfo_batch_run_service.py` |
 
-**Strategy Resolution:** All commands resolve strategy identifiers through the central 
-metadata registry located at `src/strategies/registry.py`.
+## Runtime UI
+
+| Module | Purpose |
+|---|---|
+| `runtime/terminal_ui/README.md` | runtime overview, tabs, queue/stress-testing notes |
+| `runtime/terminal_ui/app.py` | FastAPI app factory |
+| `runtime/terminal_ui/composition.py` | dependency and lifecycle wiring |
+| `runtime/terminal_ui/service.py` | artifact-loading and runtime query layer |
+| `runtime/terminal_ui/routes_partials.py` | HTML partial endpoints |
+| `runtime/terminal_ui/routes_charts.py` | chart JSON endpoints |
+| `runtime/terminal_ui/routes_operations.py` | scenario and operational endpoints |
+
+## Contributor Shortcut
+
+If you are deciding where a change belongs:
+
+- CLI flag parsing or dispatch -> `run.py` or `cli/`
+- workflow orchestration -> `services/`
+- bar-by-bar execution -> engine modules
+- saved metrics or reports -> `analytics/`
+- UI rendering or route handling -> `runtime/terminal_ui/`

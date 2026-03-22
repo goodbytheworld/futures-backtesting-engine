@@ -1,29 +1,80 @@
 """
-Entry point for the Backtesting Engine.
+Backtesting Engine — entry point.
 
-Primary legacy modes:
-    Donwload data from IB api
-    python run.py --download ES NQ YM RTY CL GC SI
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUICK START
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    Run single strategy backtest
-    python run.py --backtest --strategy zscore
-    python run.py --backtest --strategy zscore es --tf 30m --dashboard
+  1. Install deps      pip install -r requirements.txt
+  2. Download data     python run.py --download ES NQ YM RTY CL GC YM SI
+  3. Run a backtest    python run.py --backtest --strategy sma --symbol ES --tf 1h
+  4. Open dashboard    python run.py --dashboard
+                       (or add --dashboard to any --backtest / --portfolio-backtest call)
 
-    Run walk forward optimization
-    python run.py --wfo --strategy zscore --symbol es --tf 1h
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+AVAILABLE STRATEGIES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    Run portfolio backtest
-    python run.py --portfolio-backtest --dashboard
+  ID                  Alias               Description
+  ──────────────────  ──────────────────  ──────────────────────
+  sma                 sma_crossover       Trend Following (SMA crossover)
+  zscore              zscore_reversal     Mean Reversion  (Z-score)
+  mean_rev            mean_reversion      Mean Reversion  (Bollinger)
+  sma_pullback        —                   Trend Following (SMA pullback)
+  intraday_momentum   —                   Momentum (opening range)
+  stat_level          statistical_level   Statistical Support / Resistance
+  ict_ob              ict_order_block     ICT Order Block
 
-Lightweight batch modes:
-    Run batch backtest (examle)
-    python run.py batch --strategies sma_crossover zscore_reversal --symbol ES --tf 1h
-    python run.py batch --strategies sma_crossover --symbol ES RTY YM NQ --tf 1h
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+KNOWN SYMBOLS  (pre-loaded in instrument_specs; others use generic fallback)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    Run walk forward optimization batch backtest (examle)
-    python run.py wfo-batch --strategies sma_crossover zscore_reversal --symbol ES --tf 1h
-    python run.py wfo-batch --strategy sma_crossover --symbols ES NQ CL GC YM RTY SI --tf 1h
+  ES  NQ  YM  RTY   — US equity index futures
+  CL  NG             — energy
+  GC  SI  PL         — metals
+  ZC  ZB             — grains / bonds
+  6E                 — FX (EUR/USD CME)
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ── Data download ─────────────────────────────────────────────────────────
+  python run.py --download ES NQ YM RTY CL GC SI
+
+  ── Single backtest ───────────────────────────────────────────────────────
+  python run.py --backtest --strategy sma --symbol ES --tf 1h
+  python run.py --backtest --strategy zscore --symbol NQ --tf 30m --dashboard
+
+  ── Walk-Forward Optimization (single) ────────────────────────────────────
+  python run.py --wfo --strategy zscore --symbol ES --tf 1h
+
+  ── Portfolio backtest ────────────────────────────────────────────────────
+  python run.py --portfolio-backtest --dashboard
+  python run.py --portfolio-backtest --portfolio-config path/to/config.yaml
+
+  ── Batch: one strategy, many symbols / timeframes ────────────────────────
+  python run.py batch --strategies sma --symbol ES RTY YM NQ --tf 1h
+  python run.py batch --strategies sma zscore --symbol ES --tf 1h 30m
+
+  ── WFO-Batch: full walk-forward sweep across scenarios ───────────────────
+  python run.py wfo-batch --strategies sma zscore --symbol ES --tf 1h
+  python run.py wfo-batch --strategies sma --symbol ES NQ CL GC YM RTY --tf 1h
+
+  ── Terminal dashboard (standalone) ───────────────────────────────────────
+  python run.py --dashboard
+  python run.py --dashboard --dashboard-port 8080
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TIPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • Strategy IDs and aliases are interchangeable on the CLI.
+  • --tf accepts the same timeframe labels used in data cache filenames (30m, 1h, 4h, 1D …).
+  • batch / wfo-batch accept multiple --symbol values (space-separated) and multiple --tf values.
+  • --workers N overrides the process-pool size for batch modes (default: settings.batch_max_workers).
+  • Settings can be overridden via environment variables prefixed with QUANT_BACKTEST_
+    or by editing a .env file in the project root.
 """
 
 from __future__ import annotations
