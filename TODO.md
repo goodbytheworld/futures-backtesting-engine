@@ -7,3 +7,4 @@
 - [ ] Finish Monte Carlo simulations end-to-end: backend direction exists, but there is no real frontend workflow yet.
 - [ ] Plan archival and retention rules for large simulation result sets as a separate storage task.
 - [ ] Decide whether future simulation workers need queue partitioning beyond the current RQ terminal queue.
+- [ ] Add Forex/CFD/Crypto support.

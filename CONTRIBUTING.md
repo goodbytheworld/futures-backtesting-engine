@@ -10,15 +10,14 @@ Before changing code, read:
 2. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 3. [`docs/MODULE_MAP.md`](docs/MODULE_MAP.md)
 4. [`docs/agents.md`](docs/agents.md)
-5. [`dev_context/CLEAN_CODE_MCP.md`](dev_context/CLEAN_CODE_MCP.md)
 
-`dev_context/` contains internal development references. For general contributions, `CLEAN_CODE_MCP.md` is the only required file from that folder.
+If `dev_context/` exists locally, [`dev_context/CLEAN_CODE_MCP.md`](dev_context/CLEAN_CODE_MCP.md) is a useful internal reference, but it is not required for external contributors.
 
 ## Local Setup
 
 ```bash
-git clone <repo-url>
-cd <repo-folder>
+git clone https://github.com/DanRedelien/futures-backtesting-engine.git
+cd futures-backtesting-engine
 pip install -r requirements.txt
 pytest tests/
 ```

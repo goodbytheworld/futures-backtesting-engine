@@ -5,6 +5,15 @@ __pycache__/
 *.so
 .Python
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
 
 # Virtual environments
 env/
@@ -29,7 +38,13 @@ results/
 .DS_Store
 Thumbs.db
 
-# Sensitive / local-only paths (uncomment to exclude from the repo)
-#data/
-#src/data/
-#dev_context/
+# Local data / artifacts
+data/
+src/data/
+# dev_context: в репозитории только CLEAN_CODE_MCP.md (остальное локально)
+dev_context/*
+!dev_context/CLEAN_CODE_MCP.md
+*.db
+*.sqlite
+*.sqlite3
+*.parquet

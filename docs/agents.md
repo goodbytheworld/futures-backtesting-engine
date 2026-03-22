@@ -19,8 +19,8 @@ Read these first:
 1. `README.md`
 2. `docs/ARCHITECTURE.md`
 3. `docs/MODULE_MAP.md`
-4. `dev_context/CLEAN_CODE_MCP.md`
 
+If `dev_context/` exists locally, `dev_context/CLEAN_CODE_MCP.md` is an optional internal reference.
 Do not read unrelated files in `dev_context/` unless the task explicitly requires them.
 
 ## Non-Negotiable Invariants

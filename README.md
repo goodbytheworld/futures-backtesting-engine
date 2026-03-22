@@ -9,6 +9,50 @@ Futures-focused research platform for:
 
 The codebase is optimized for research workflows where no-lookahead execution, artifact reproducibility, and post-run analytics matter more than framework breadth.
 
+## Screenshots
+
+Add real image links after you capture them. Keep the images reasonably wide and focused on one workflow each.
+
+### Terminal UI Overview
+
+Main dashboard view after a completed run. Show the top summary, key metrics, and the general terminal-style layout.
+
+```md
+![Terminal UI overview](docs/screenshots/terminal-ui-overview.png)
+```
+
+### Portfolio Analytics
+
+Portfolio backtest results with shared-capital behavior visible. Prefer a screen that shows allocation, equity curve, or portfolio-level tables.
+
+```md
+![Portfolio analytics](docs/screenshots/portfolio-analytics.png)
+```
+
+### Exit Analysis
+
+One detailed analytics screen that demonstrates post-run inspection depth. Good candidates are exit breakdown, execution quality, or trade log detail.
+
+```md
+![Exit analysis](docs/screenshots/exit-analysis.png)
+```
+
+### Stress Testing / Scenario Queue
+
+If you want to highlight the more advanced workflow, show the stress-testing tab or scenario job flow. Skip this screenshot if you do not want Redis-backed features in the first impression.
+
+```md
+![Stress testing workflow](docs/screenshots/stress-testing.png)
+```
+
+### CLI Workflow
+
+Terminal output from a real run. Use a clean example that shows the project is usable without the UI as well.
+
+```md
+![CLI workflow](docs/screenshots/cli-workflow.png)
+```
+
 ## What This Project Does
 
 - Runs single-asset event-driven backtests on cached OHLCV futures data.
@@ -27,8 +71,8 @@ The codebase is optimized for research workflows where no-lookahead execution, a
 ## Quick Start
 
 ```bash
-git clone <repo-url>
-cd <repo-folder>
+git clone https://github.com/DanRedelien/futures-backtesting-engine.git
+cd futures-backtesting-engine
 pip install -r requirements.txt
 pytest tests/
 ```
