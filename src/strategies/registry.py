@@ -4,8 +4,10 @@ src/strategies/registry.py
 Centralized registry for all available trading strategies.
 """
 
-from typing import Any, Dict, List
+from __future__ import annotations
+
 import importlib
+from typing import Any, Dict, List
 
 # Central registry of strategy metadata
 # Keys are the short names (IDs) used in CLI and YAML configs.
@@ -48,13 +50,57 @@ STRATEGIES = {
     },
 }
 
-def get_strategy_ids() -> List[str]:
-    """Returns a list of all registered strategy IDs."""
-    return list(STRATEGIES.keys())
+STRATEGY_ALIASES = {
+    "sma_crossover": "sma",
+    "mean_reversion": "mean_rev",
+    "zscore_reversal": "zscore",
+    "ict_order_block": "ict_ob",
+    "statistical_level": "stat_level",
+}
+
+
+def resolve_strategy_id(strategy_id: str) -> str:
+    """
+    Resolves CLI/YAML aliases to the canonical registry identifier.
+
+    Args:
+        strategy_id: Raw strategy identifier from the user or config.
+
+    Returns:
+        Canonical registry identifier stored in ``STRATEGIES``.
+    """
+    normalized = str(strategy_id or "").strip()
+    if normalized in STRATEGIES:
+        return normalized
+    return STRATEGY_ALIASES.get(normalized, normalized)
+
+
+def get_strategy_ids(include_aliases: bool = False) -> List[str]:
+    """
+    Returns all strategy identifiers exposed by the registry.
+
+    Args:
+        include_aliases: Whether to append accepted CLI aliases.
+
+    Returns:
+        List of strategy identifiers.
+    """
+    strategy_ids = list(STRATEGIES.keys())
+    if include_aliases:
+        strategy_ids.extend(sorted(STRATEGY_ALIASES.keys()))
+    return strategy_ids
 
 def get_strategy_metadata(strategy_id: str) -> Dict[str, str]:
-    """Returns metadata for a given strategy ID."""
-    return STRATEGIES.get(strategy_id, {})
+    """
+    Returns metadata for a given strategy ID or alias.
+
+    Args:
+        strategy_id: Canonical strategy ID or accepted alias.
+
+    Returns:
+        Metadata dictionary or an empty dict when not found.
+    """
+    return STRATEGIES.get(resolve_strategy_id(strategy_id), {})
 
 def load_strategy_by_id(strategy_id: str) -> Any:
     """
@@ -66,10 +112,16 @@ def load_strategy_by_id(strategy_id: str) -> Any:
     Returns:
         Strategy class (subclass of BaseStrategy).
     """
-    if strategy_id not in STRATEGIES:
-        raise ValueError(f"Unknown strategy '{strategy_id}'. Available: {list(STRATEGIES.keys())}")
-    
-    module_path, class_name = STRATEGIES[strategy_id]["class_path"].split(":")
+    resolved_strategy_id = resolve_strategy_id(strategy_id)
+    if resolved_strategy_id not in STRATEGIES:
+        available = ", ".join(get_strategy_ids())
+        aliases = ", ".join(sorted(STRATEGY_ALIASES.keys()))
+        raise ValueError(
+            f"Unknown strategy '{strategy_id}'. Available: {available}. "
+            f"Aliases: {aliases}"
+        )
+
+    module_path, class_name = STRATEGIES[resolved_strategy_id]["class_path"].split(":")
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
 

@@ -1,70 +1,125 @@
 """
 Entry point for the Backtesting Engine.
 
-TODO: create 4-step testing line, like:
+Primary legacy modes:
+    Donwload data from IB api
+    python run.py --download ES NQ YM RTY CL GC SI
 
-1. python run.py --download ES NQ YM RTY CL GC SI
-2. python run.py --backtest --strategy zscore (Create strategy and test in with Deep-Analysis)
-3. python run.py --ultra fast single strategys (create ultra fast and very simple strategy tester, 
-    he takes 10 selected strategys and runs them in single strategy mode, 
-    then builds matplot lib with them all(only graph) without saving .png, just open in window.
-    + 3 metrics, pnl%, Sharp ratio, MDD% per strategy, that all in one graph)
-    Like protoflio mode, but without deep-analysis.
-4. Optimizer (optimize best strategy)
-5. python run.py --portfolio-backtest (take best and create uncorrletaed pnl strategys.)
-
-Execution modes:
-    1. Single-Asset Backtest      (--backtest)
-    2. Walk-Forward Optimization  (--wfo)
-    3. Multi-Strategy Portfolio   (--portfolio-backtest)
-    4. Dashboard only             (--dashboard)
-
-    To see all available strategies:
-        python run.py --help
-
-── 1. Single-Asset Backtesting ──────────────────────────────────────────────
+    Run single strategy backtest
     python run.py --backtest --strategy zscore
+    python run.py --backtest --strategy zscore es --tf 30m --dashboard
 
-── 2. Walk-Forward Optimization (WFO) ───────────────────────────────────────
-    python run.py --wfo --strategy zscore
+    Run walk forward optimization
+    python run.py --wfo --strategy zscore --symbol es --tf 1h
 
-── 3. Portfolio Backtesting ─────────────────────────────────────────────────
-    python run.py --portfolio-backtest
-    python run.py --portfolio-backtest --portfolio-config my_config.yaml
-
-── 4. Open Dashboard (standalone, no new backtest) ──────────────────────────
-    python run.py --dashboard
-
-    To run a backtest and open the dashboard immediately after:
-    python run.py --backtest --strategy zscore --dashboard
+    Run portfolio backtest
     python run.py --portfolio-backtest --dashboard
 
-── Data Management ──────────────────────────────────────────────────────────
-    python run.py --download ES NQ YM RTY CL GC SI
+Lightweight batch modes:
+    Run batch backtest (examle)
+    python run.py batch --strategies sma_crossover zscore_reversal --symbol ES --tf 1h
+    python run.py batch --strategies sma_crossover --symbol ES RTY YM NQ --tf 1h
+
+    Run walk forward optimization batch backtest (examle)
+    python run.py wfo-batch --strategies sma_crossover zscore_reversal --symbol ES --tf 1h
+    python run.py wfo-batch --strategy sma_crossover --symbols ES NQ CL GC YM RTY SI --tf 1h
+
 """
 
+from __future__ import annotations
+
 import argparse
+import json
+import os
+from pathlib import Path
+import socket
 import subprocess
 import sys
-from pathlib import Path
+from typing import Sequence
+import urllib.error
+import urllib.request
 
 
 _PROJECT_ROOT = Path(__file__).parent
-_TERMINAL_DASHBOARD_APP = "src.backtest_engine.analytics.terminal_ui.app:app"
+_TERMINAL_DASHBOARD_APP = "src.backtest_engine.runtime.terminal_ui.app:app"
 _TERMINAL_DASHBOARD_HOST = "127.0.0.1"
 _TERMINAL_DASHBOARD_PORT = "8000"
+_HEALTH_HEADER = "X-Quant-Terminal"
+_HEALTH_HEADER_VALUE = "1"
+_LIGHTWEIGHT_BATCH_COMMANDS = {"batch", "wfo-batch"}
 
 
-def _launch_dashboard() -> None:
+def _resolve_preferred_dashboard_port(cli_port: int | None) -> int:
+    """Resolves the preferred dashboard HTTP port."""
+    if cli_port is not None:
+        return cli_port
+    raw = os.environ.get("TERMINAL_DASHBOARD_PORT", _TERMINAL_DASHBOARD_PORT)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(_TERMINAL_DASHBOARD_PORT)
+
+
+def _dashboard_already_running(host: str, port: int) -> bool:
+    """True when this project's terminal dashboard is already listening."""
+    url = f"http://{host}:{port}/health"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            if resp.headers.get(_HEALTH_HEADER) != _HEALTH_HEADER_VALUE:
+                return False
+            body = json.loads(resp.read().decode())
+            return body.get("status") == "ok"
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return False
+
+
+def _first_free_tcp_port(host: str, start: int, *, span: int = 32) -> int:
+    """Returns the first free TCP port in a small Windows-safe range."""
+    last_error: OSError | None = None
+    for port in range(start, start + span):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, port))
+            except OSError as exc:
+                last_error = exc
+                continue
+            return port
+    hint = f": {last_error}" if last_error else ""
+    raise RuntimeError(
+        f"No free TCP port found for terminal dashboard on {host} "
+        f"(tried {start}..{start + span - 1}){hint}"
+    )
+
+
+def _launch_dashboard(*, dashboard_port: int | None = None) -> None:
     """
     Launches the FastAPI terminal dashboard as a child process.
 
-    Runs in the foreground so the terminal shows ASGI logs.
-    The backtest process has already finished writing artifacts before
-    this call — no race condition.
+    Methodology:
+        The dashboard remains a separate uvicorn process.  The launcher avoids
+        spawning duplicates and falls back to the next free port when needed.
     """
+    host = _TERMINAL_DASHBOARD_HOST
+    preferred = _resolve_preferred_dashboard_port(dashboard_port)
+
+    if _dashboard_already_running(host, preferred):
+        print(
+            f"\n[Dashboard] Terminal UI already running - open "
+            f"http://{host}:{preferred} (not starting a second server).\n"
+        )
+        return
+
+    port = _first_free_tcp_port(host, preferred)
+    if port != preferred:
+        print(
+            f"\n[Dashboard] Port {preferred} is in use; "
+            f"binding terminal dashboard on {port} instead.\n"
+        )
+
     print("\n[Dashboard] Launching terminal dashboard...")
-    print(f"[Dashboard] URL: http://{_TERMINAL_DASHBOARD_HOST}:{_TERMINAL_DASHBOARD_PORT}\n")
+    print(f"[Dashboard] URL: http://{host}:{port}\n")
     subprocess.run(
         [
             sys.executable,
@@ -72,66 +127,251 @@ def _launch_dashboard() -> None:
             "uvicorn",
             _TERMINAL_DASHBOARD_APP,
             "--host",
-            _TERMINAL_DASHBOARD_HOST,
+            host,
             "--port",
-            _TERMINAL_DASHBOARD_PORT,
+            str(port),
         ],
         cwd=str(_PROJECT_ROOT),
         check=False,
     )
 
 
+def _build_lightweight_batch_parser(command_name: str) -> argparse.ArgumentParser:
+    """
+    Builds the dedicated parser for the new positional batch commands.
+
+    Args:
+        command_name: Either ``batch`` or ``wfo-batch``.
+
+    Returns:
+        Configured parser for that command.
+    """
+    parser = argparse.ArgumentParser(
+        prog=f"python run.py {command_name}",
+        description=(
+            "Lightweight multi-scenario batch backtester."
+            if command_name == "batch"
+            else "Lightweight multi-scenario WFO batch runner."
+        ),
+    )
+    strategy_group = parser.add_mutually_exclusive_group(required=True)
+    strategy_group.add_argument("--strategy", type=str, help="One strategy ID or alias")
+    strategy_group.add_argument(
+        "--strategies",
+        nargs="+",
+        help="One or many strategy IDs or aliases",
+    )
+    symbol_group = parser.add_mutually_exclusive_group(required=True)
+    symbol_group.add_argument(
+        "--symbol",
+        dest="symbols",
+        nargs="+",
+        help="One or many futures symbols",
+    )
+    symbol_group.add_argument(
+        "--symbols",
+        dest="symbols",
+        nargs="+",
+        help="One or many futures symbols",
+    )
+    parser.add_argument(
+        "--tf",
+        nargs="+",
+        required=True,
+        metavar="TIMEFRAME",
+        help="One or many timeframes (for example: 1h 30m 5m 1m)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Optional worker override for the batch process pool",
+    )
+    return parser
+
+
+def _dispatch_lightweight_batch_command(argv: Sequence[str]) -> bool:
+    """
+    Dispatches the new lightweight batch commands before the legacy parser.
+
+    Args:
+        argv: Raw CLI arguments excluding the executable name.
+
+    Returns:
+        True when a lightweight command was handled.
+    """
+    if not argv:
+        return False
+
+    command_name = str(argv[0]).strip().lower()
+    if command_name not in _LIGHTWEIGHT_BATCH_COMMANDS:
+        return False
+
+    parser = _build_lightweight_batch_parser(command_name)
+    args = parser.parse_args(list(argv[1:]))
+
+    from src.backtest_engine.settings import BacktestSettings
+
+    settings = BacktestSettings()
+    strategy_names = [args.strategy] if args.strategy else list(args.strategies or [])
+
+    if command_name == "batch":
+        from cli.batch import run as run_batch
+
+        run_batch(
+            strategy_names=strategy_names,
+            symbols=args.symbols,
+            timeframes=args.tf,
+            settings=settings,
+            max_workers=args.workers,
+        )
+    else:
+        from cli.wfo_batch import run as run_wfo_batch
+
+        run_wfo_batch(
+            strategy_names=strategy_names,
+            symbols=args.symbols,
+            timeframes=args.tf,
+            settings=settings,
+            max_workers=args.workers,
+        )
+
+    return True
+
+
+def _apply_single_mode_overrides(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    settings: "BacktestSettings",
+) -> "BacktestSettings":
+    """
+    Applies legacy single-mode symbol/timeframe CLI overrides.
+
+    Args:
+        parser: Active argparse parser for validation failures.
+        args: Parsed CLI namespace.
+        settings: Base settings loaded from environment.
+
+    Returns:
+        Possibly updated settings instance.
+    """
+    updates: dict[str, object] = {}
+    flag_symbol = str(args.symbol_override).strip() if args.symbol_override else ""
+    positional_symbol = (
+        str(args.symbol_positional).strip() if args.symbol_positional else ""
+    )
+
+    if flag_symbol and positional_symbol and flag_symbol.upper() != positional_symbol.upper():
+        parser.error("Use either '--symbol ES' or positional 'ES', not both.")
+
+    resolved_symbol = flag_symbol or positional_symbol
+    if resolved_symbol:
+        updates["default_symbol"] = resolved_symbol.upper()
+
+    timeframes = list(args.timeframes or [])
+    if timeframes:
+        if len(timeframes) != 1:
+            parser.error(
+                "--tf accepts exactly one value for --backtest and --wfo. "
+                "Use 'batch' or 'wfo-batch' for multi-timeframe sweeps."
+            )
+        updates["low_interval"] = str(timeframes[0]).strip()
+
+    return settings.model_copy(update=updates) if updates else settings
+
+
 if __name__ == "__main__":
-    from src.strategies.registry import STRATEGIES
-    strategy_list = ", ".join(STRATEGIES.keys())
+    if _dispatch_lightweight_batch_command(sys.argv[1:]):
+        sys.exit(0)
+
+    from src.strategies.registry import get_strategy_ids
+
+    strategy_list = ", ".join(get_strategy_ids(include_aliases=True))
 
     parser = argparse.ArgumentParser(
         description="Backtesting Engine",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--download", nargs="+",
-                        help="Download data for symbols via IB")
-    parser.add_argument("--backtest", action="store_true",
-                        help="Run single-asset backtest")
-    parser.add_argument("--wfo", action="store_true",
-                        help="Run Walk-Forward Optimization")
-    parser.add_argument("--strategy", type=str, default="sma",
-                        help=f"Strategy name ({strategy_list})")
-    parser.add_argument("--portfolio-backtest", action="store_true",
-                        help="Run multi-strategy portfolio backtest")
-    parser.add_argument("--portfolio-config", type=str,
-                        default="src/backtest_engine/portfolio_layer/portfolio_config_example.yaml",
-                        help="Path to YAML portfolio config")
-    parser.add_argument("--dashboard", action="store_true",
-                        help=(
-                            "Launch terminal dashboard. "
-                            "When combined with --backtest/--portfolio-backtest, "
-                            "opens AFTER the backtest completes. "
-                            "Standalone: 'python run.py --dashboard'."
-                        ))
+    parser.add_argument("--download", nargs="+", help="Download data for symbols via IB")
+    parser.add_argument("--backtest", action="store_true", help="Run single-asset backtest")
+    parser.add_argument("--wfo", action="store_true", help="Run Walk-Forward Optimization")
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        default="sma",
+        help=f"Strategy name ({strategy_list})",
+    )
+    parser.add_argument(
+        "--symbol",
+        dest="symbol_override",
+        type=str,
+        default=None,
+        help="Override default symbol for --backtest or --wfo",
+    )
+    parser.add_argument(
+        "--tf",
+        dest="timeframes",
+        nargs="+",
+        default=None,
+        metavar="TIMEFRAME",
+        help="Override timeframe for --backtest or --wfo",
+    )
+    parser.add_argument(
+        "--portfolio-backtest",
+        action="store_true",
+        help="Run multi-strategy portfolio backtest",
+    )
+    parser.add_argument(
+        "--portfolio-config",
+        type=str,
+        default="src/backtest_engine/portfolio_layer/portfolio_config_example.yaml",
+        help="Path to YAML portfolio config",
+    )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help=(
+            "Launch terminal dashboard. "
+            "When combined with --backtest/--portfolio-backtest, "
+            "opens AFTER the backtest completes. "
+            "Standalone: 'python run.py --dashboard'."
+        ),
+    )
+    parser.add_argument(
+        "--dashboard-port",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help=(
+            "HTTP port for the terminal dashboard (default: 8000 or "
+            "TERMINAL_DASHBOARD_PORT). If the port is busy, the next free port is used."
+        ),
+    )
     parser.add_argument("--results-subdir", type=str, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--scenario-id", type=str, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--baseline-run-id", type=str, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--scenario-type", type=str, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--scenario-params-json", type=str, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("symbol_positional", nargs="?", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(1)
 
-    # ── Mode: dashboard only (no backtest) ────────────────────────────────────
     if args.dashboard and not args.backtest and not args.portfolio_backtest and not args.wfo:
-        _launch_dashboard()
+        _launch_dashboard(dashboard_port=args.dashboard_port)
         sys.exit(0)
 
-    # ── Mode: data download ───────────────────────────────────────────────────
     from src.backtest_engine.settings import BacktestSettings
+
     settings = BacktestSettings()
+    settings = _apply_single_mode_overrides(parser, args, settings)
 
     if args.download:
         from src.data import IBFetcher
+
         print("=" * 60)
         print(f"  Downloading data: {args.download}")
         print("=" * 60)
@@ -140,21 +380,21 @@ if __name__ == "__main__":
             fetcher.fetch_all_timeframes(sym)
         print("Download complete.")
 
-    # ── Mode: single backtest ─────────────────────────────────────────────────
     if args.backtest:
         from cli.single import run as run_backtest
+
         run_backtest(args.strategy, settings)
         if args.dashboard:
-            _launch_dashboard()
+            _launch_dashboard(dashboard_port=args.dashboard_port)
 
-    # ── Mode: WFO ─────────────────────────────────────────────────────────────
     if args.wfo:
         from cli.wfo import run as run_wfo
+
         run_wfo(args.strategy, settings)
 
-    # ── Mode: portfolio backtest ───────────────────────────────────────────────
     if getattr(args, "portfolio_backtest", False):
         from cli.portfolio import run as run_portfolio
+
         run_portfolio(
             args.portfolio_config,
             results_subdir=args.results_subdir,
@@ -164,4 +404,4 @@ if __name__ == "__main__":
             scenario_params_json=args.scenario_params_json,
         )
         if args.dashboard:
-            _launch_dashboard()
+            _launch_dashboard(dashboard_port=args.dashboard_port)

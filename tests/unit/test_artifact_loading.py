@@ -7,13 +7,13 @@ from typing import Callable
 import pandas as pd
 
 from src.backtest_engine.analytics.artifact_contract import resolve_engine_version
-from src.backtest_engine.analytics.dashboard.core.data_layer import (
+from src.backtest_engine.services.artifact_service import (
     ResultBundle,
     inspect_result_bundle,
     load_result_bundle_uncached,
     result_bundle_service,
 )
-from src.backtest_engine.analytics.dashboard.core.scenario_runner import (
+from src.backtest_engine.services.scenario_runner_service import (
     resolve_portfolio_config_path,
 )
 from src.backtest_engine.portfolio_layer.reporting.results import (

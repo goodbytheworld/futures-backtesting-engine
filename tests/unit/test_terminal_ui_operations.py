@@ -8,7 +8,7 @@ from typing import Callable
 import pandas as pd
 from fastapi.testclient import TestClient
 
-from src.backtest_engine.analytics.dashboard.core.data_layer import ResultBundle
+from src.backtest_engine.services.artifact_service import ResultBundle
 from src.backtest_engine.analytics.scenario_engine import (
     ArtifactFamily,
     JobType,
@@ -16,17 +16,17 @@ from src.backtest_engine.analytics.scenario_engine import (
     ScenarioFamily,
     ScenarioSpec,
 )
-from src.backtest_engine.analytics.terminal_ui.app import create_terminal_dashboard_app
-from src.backtest_engine.analytics.terminal_ui.cache import (
+from src.backtest_engine.runtime.terminal_ui.app import create_terminal_dashboard_app
+from src.backtest_engine.runtime.terminal_ui.cache import (
     TerminalCachePolicy,
     TerminalCacheService,
 )
-from src.backtest_engine.analytics.terminal_ui.jobs import (
+from src.backtest_engine.services.scenario_job_service import (
     ScenarioJobService,
     ScenarioJobStore,
     TerminalQueueConfig,
 )
-from src.backtest_engine.analytics.terminal_ui.worker_manager import LocalWorkerManager
+from src.backtest_engine.services.worker_manager import LocalWorkerManager
 
 
 def _queue_status_payload(
@@ -236,7 +236,7 @@ def test_queue_status_only_advertises_publicly_queueable_job_types() -> None:
 def test_queue_status_reports_missing_dependencies(monkeypatch) -> None:
     """Readiness should distinguish missing Python modules from Redis reachability issues."""
 
-    import src.backtest_engine.analytics.terminal_ui.jobs as jobs_module
+    import src.backtest_engine.services.scenario_job_service as jobs_module
 
     def _missing_import(name: str) -> object:
         raise ModuleNotFoundError(name)
@@ -265,7 +265,7 @@ def test_queue_status_reports_missing_dependencies(monkeypatch) -> None:
 def test_queue_status_rechecks_optional_modules_dynamically(monkeypatch) -> None:
     """Dependency readiness should re-import optional backends instead of using process-stale globals."""
 
-    import src.backtest_engine.analytics.terminal_ui.jobs as jobs_module
+    import src.backtest_engine.services.scenario_job_service as jobs_module
 
     class FakeRedisClient:
         def ping(self) -> None:

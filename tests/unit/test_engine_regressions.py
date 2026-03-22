@@ -7,9 +7,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import src.backtest_engine.analytics.dashboard.core.scenario_runner as scenario_runner
-from src.backtest_engine.analytics.dashboard.core.data_layer import ResultBundle
-from src.backtest_engine.analytics.dashboard.core.transforms.stress import _build_trade_cost_series
+import src.backtest_engine.services.scenario_runner_service as scenario_runner
+from src.backtest_engine.services.artifact_service import ResultBundle
+from src.backtest_engine.analytics.shared.transforms.stress import _build_trade_cost_series
 from src.backtest_engine.analytics.exit_analysis import enrich_trades_with_exit_analytics
 from src.backtest_engine.analytics.exporter import save_backtest_results
 from src.backtest_engine.execution import ExecutionHandler, Order

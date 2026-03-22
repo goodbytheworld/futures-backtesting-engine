@@ -1,0 +1,99 @@
+<section class="terminal-panel__stack">
+    <article class="terminal-panel">
+        <div class="terminal-panel__header">
+            <div>
+                <h2>Operations</h2>
+                <p>Queue diagnostics, worker guidance, and job history for the async scenario pipeline.</p>
+            </div>
+        </div>
+
+        <div class="terminal-inline-notice">{{ operations_notice }}</div>
+
+        <div class="metric-grid metric-grid--compact">
+            <div class="metric-card">
+                <span class="metric-card__label">Backend</span>
+                <span class="metric-card__value">{{ queue_status.backend }}</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-card__label">Readiness</span>
+                <span class="metric-card__value">{{ queue_status.readiness_state|replace("_", " ")|title }}</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-card__label">Managed Worker</span>
+                <span class="metric-card__value">{{ queue_status.worker.state|replace("_", " ")|title }}</span>
+            </div>
+            <div class="metric-card">
+                <span class="metric-card__label">Public Jobs</span>
+                <span class="metric-card__value">{{ queue_status.supported_job_types|join(", ") }}</span>
+            </div>
+        </div>
+
+        <div class="terminal-inline-notice">{{ queue_status.limitations }}</div>
+        <div class="terminal-inline-notice">{{ queue_status.readiness_message }}</div>
+        <div class="terminal-inline-notice">
+            Expected worker command: <code>{{ queue_status.worker_start_command }}</code>
+        </div>
+        {% if queue_status.worker.last_error %}
+        <div class="terminal-inline-notice">{{ queue_status.worker.last_error }}</div>
+        {% endif %}
+    </article>
+
+    <article class="terminal-panel">
+        <div class="terminal-panel__header">
+            <div>
+                <h2>Active Jobs</h2>
+                <p>All queued and running jobs stream progress concurrently through SSE.</p>
+            </div>
+        </div>
+
+        {% if active_jobs %}
+        <div class="terminal-job-grid">
+            {% for job in active_jobs %}
+            {% include "components/job_card.html" %}
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="terminal-empty-state">No queued or running jobs right now.</div>
+        {% endif %}
+    </article>
+
+    <article class="terminal-panel">
+        <div class="terminal-panel__header">
+            <div>
+                <h2>Recent Jobs</h2>
+                <p>Completed, failed, and timeout jobs remain visible for debugging and artifact inspection.</p>
+            </div>
+        </div>
+
+        {% if recent_jobs %}
+        <div class="terminal-table-wrap">
+            <table class="terminal-table terminal-table--jobs-history">
+                <thead>
+                    <tr>
+                        <th>Job</th>
+                        <th>Stage</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Output</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in recent_jobs %}
+                    <tr>
+                        <td>{{ job.job_id }}</td>
+                        <td>{{ job.progress_stage_label or "N/A" }}</td>
+                        <td>{{ job.status }}</td>
+                        <td>{{ job.created_at }}</td>
+                        {% with path=job.output_artifact_path %}
+                        {% include "components/output_path_cell.html" %}
+                        {% endwith %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="terminal-empty-state">No finalized jobs yet.</div>
+        {% endif %}
+    </article>
+</section>

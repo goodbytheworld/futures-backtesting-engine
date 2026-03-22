@@ -20,7 +20,7 @@ pytest tests/unit/test_metrics.py
 | File | Purpose |
 | --- | --- |
 | `test_artifact_loading.py` | Validates artifact loading, integrity states, and rerun metadata rules. |
-| `test_terminal_ui_app.py` | Covers terminal shell rendering, partial responses, and chart payload contracts. |
+| `test_terminal_ui_shell.py` | Covers terminal shell rendering, partial responses, and chart payload contracts. |
 | `test_terminal_ui_operations.py` | Covers cache-key format, job metadata persistence, and operations endpoints. |
 | `test_pnl_transforms.py` | Validates canonical PnL and risk transform behavior. |
 | `test_engine_regressions.py` | Protects engine and artifact regressions that must stay stable after refactors. |

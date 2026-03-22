@@ -35,6 +35,22 @@ class DataLake:
         cache_dir = self.settings.get_cache_path()
         return cache_dir / f"{symbol}_{timeframe}.parquet"
 
+    def get_cache_file_path(self, symbol: str, timeframe: str = "5m") -> Path:
+        """Returns the resolved cache file path for a symbol and timeframe.
+
+        Methodology:
+            Public accessor so orchestration layers can build provenance
+            fingerprints without reaching into private internals.
+
+        Args:
+            symbol: Futures symbol (e.g. 'ES').
+            timeframe: Timeframe suffix ('1m', '5m', '30m', '1h').
+
+        Returns:
+            Absolute path to the expected Parquet cache file.
+        """
+        return self._get_cache_file(symbol, timeframe)
+
     def _read_cache_index(self, cache_file: Path) -> pd.DatetimeIndex:
         """
         Reads and normalizes the cache index as a naive UTC DatetimeIndex.

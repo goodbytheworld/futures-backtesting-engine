@@ -283,6 +283,7 @@ class OptunaOptimizer:
         data: Optional[pd.DataFrame] = None,
         n_trials: Optional[int] = None,
         fold_id: int = 0,
+        show_progress_bar: bool = True,
     ) -> Dict[str, Any]:
         """
         Run optimisation on a date-bounded slice (for WFV usage).
@@ -294,6 +295,7 @@ class OptunaOptimizer:
             data: Pre-sliced dataframe for Dependency Injection mapping.
             n_trials: Number of Optuna trials.
             fold_id: Fold identifier for study naming.
+            show_progress_bar: Whether Optuna should render its own progress bar.
 
         Returns:
             Dict with best_params, best_score, n_trials, trial_std.
@@ -350,7 +352,7 @@ class OptunaOptimizer:
         study.optimize(
             objective, 
             n_trials=n_trials,
-            show_progress_bar=True
+            show_progress_bar=show_progress_bar,
         )
         optuna.logging.set_verbosity(optuna.logging.INFO)
 

@@ -18,8 +18,8 @@ from typing import Callable
 import pandas as pd
 import pytest
 
-from src.backtest_engine.analytics.dashboard.core.data_layer import ResultBundle
-from src.backtest_engine.analytics.terminal_ui.exit_chart_builders import (
+from src.backtest_engine.services.artifact_service import ResultBundle
+from src.backtest_engine.runtime.terminal_ui.exit_chart_builders import (
     build_exit_holding_time_payload,
     build_exit_mfe_mae_payload,
     build_exit_pnl_decay_payload,
@@ -27,8 +27,8 @@ from src.backtest_engine.analytics.terminal_ui.exit_chart_builders import (
     build_exit_reason_payload,
     build_exit_vol_regime_payload,
 )
-from src.backtest_engine.analytics.terminal_ui.service import load_terminal_bundle
-from src.backtest_engine.analytics.terminal_ui.table_builders import build_exit_detail_table
+from src.backtest_engine.runtime.terminal_ui.service import load_terminal_bundle
+from src.backtest_engine.runtime.terminal_ui.table_builders import build_exit_detail_table
 
 
 # ---------------------------------------------------------------------------

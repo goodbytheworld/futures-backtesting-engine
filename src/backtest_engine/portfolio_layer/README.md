@@ -37,4 +37,4 @@ The portfolio layer separates strategy execution, position tracking, capital all
 
 - Portfolio runs persist their canonical artifact bundle under `results/portfolio/`.
 - Scenario reruns persist namespaced bundles under `results/scenarios/<scenario_id>/portfolio/`.
-- These bundles are consumed by `analytics/dashboard/core/data_layer.py` and the FastAPI terminal UI in `analytics/terminal_ui/`.
+- These bundles are consumed by `services/artifact_service.py` and the FastAPI terminal UI in `runtime/terminal_ui/`.

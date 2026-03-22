@@ -225,6 +225,9 @@ class WalkForwardOptimizer:
         purge_bars: int = 0,
         embargo_bars: int = 0,
         anchored: bool = False,
+        verbose: bool = True,
+        print_report: bool = True,
+        show_progress_bar: bool = True,
     ) -> WFVReport:
         """
         Run Walk-Forward Validation for a strategy.
@@ -240,6 +243,9 @@ class WalkForwardOptimizer:
             purge_bars: Gap between Train and Test to remove overlap.
             embargo_bars: Additional gap to prevent correlation leakage.
             anchored: True for expanding window, False for rolling window.
+            verbose: Whether progress and fold diagnostics are printed.
+            print_report: Whether the final human-readable report is printed.
+            show_progress_bar: Whether Optuna prints its fold-level progress bar.
 
         Returns:
             WFVReport with fold results and skeptic analysis.
@@ -252,17 +258,20 @@ class WalkForwardOptimizer:
         timeframe = self.settings.low_interval
 
         # Load full dataset to determine date boundaries
-        print(f"\n[WFV] Loading {symbol} @ {timeframe} for fold generation...")
+        if verbose:
+            print(f"\n[WFV] Loading {symbol} @ {timeframe} for fold generation...")
         data = self.data_lake.load(symbol, timeframe=timeframe)
 
         if data.empty:
-            print("[WFV] No data found. Aborting.")
+            if verbose:
+                print("[WFV] No data found. Aborting.")
             return WFVReport(symbol, strategy_class.__name__, 0, [])
 
-        print(
-            f"[WFV] Data range: {data.index[0].date()} -> {data.index[-1].date()} "
-            f"| {len(data):,} bars"
-        )
+        if verbose:
+            print(
+                f"[WFV] Data range: {data.index[0].date()} -> {data.index[-1].date()} "
+                f"| {len(data):,} bars"
+            )
 
         # Generate index-based folds
         splitter = PurgedFoldGenerator(
@@ -281,7 +290,8 @@ class WalkForwardOptimizer:
         # Silence Optuna's trial-by-trial logs for a cleaner console
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-        print(f"\n[WFV] Starting {n_folds}-Fold Walk-Forward on {symbol}...")
+        if verbose:
+            print(f"\n[WFV] Starting {n_folds}-Fold Walk-Forward on {symbol}...")
 
         for i, (train_idx, test_idx) in enumerate(folds):
             # Convert indices to date boundaries AND slice data
@@ -294,11 +304,12 @@ class WalkForwardOptimizer:
             train_slice = data.iloc[train_idx]
             test_slice = data.iloc[test_idx]
 
-            print(
-                f"\n  Fold {i + 1}/{len(folds)}: "
-                f"IS {train_start.date()} -> {train_end.date()} | "
-                f"OOS {test_start.date()} -> {test_end.date()}"
-            )
+            if verbose:
+                print(
+                    f"\n  Fold {i + 1}/{len(folds)}: "
+                    f"IS {train_start.date()} -> {train_end.date()} | "
+                    f"OOS {test_start.date()} -> {test_end.date()}"
+                )
 
             # 1. Optimize (IS) — dataset injected
             fold_start_time = time.time()
@@ -309,6 +320,7 @@ class WalkForwardOptimizer:
                 data=train_slice,
                 n_trials=n_trials,
                 fold_id=i,
+                show_progress_bar=show_progress_bar,
             )
             fold_end_time = time.time()
 
@@ -341,11 +353,12 @@ class WalkForwardOptimizer:
                 )
             )
 
-            print(
-                f"  Fold {i + 1}: IS {opt_result['best_score']:.2f} -> "
-                f"OOS {eval_result['score']:.2f} "
-                f"({fold_end_time - fold_start_time:.1f}s)"
-            )
+            if verbose:
+                print(
+                    f"  Fold {i + 1}: IS {opt_result['best_score']:.2f} -> "
+                    f"OOS {eval_result['score']:.2f} "
+                    f"({fold_end_time - fold_start_time:.1f}s)"
+                )
 
         wfo_end_time = time.time()
         total_time = wfo_end_time - wfo_start_time
@@ -359,11 +372,26 @@ class WalkForwardOptimizer:
 
         report.compute()
 
-        self._print_human_report(report)
+        if print_report:
+            self._print_human_report(report)
         return report
 
-    def _print_human_report(self, report: WFVReport) -> None:
-        """Generates a Quant-style critical report."""
+    def format_human_report(self, report: WFVReport) -> str:
+        """
+        Formats the existing human-readable WFO audit report.
+
+        Methodology:
+            Batch WFO needs the exact same analyst-facing text output as the
+            regular command, but saved to files instead of printed inline.  The
+            formatter keeps that content in one place so standard ``--wfo`` and
+            ``wfo-batch`` stay consistent.
+
+        Args:
+            report: Aggregated WFO report instance.
+
+        Returns:
+            Multi-line terminal report string.
+        """
 
         def _bar(val, max_val=2.0, width=10):
             if val < 0:
@@ -375,36 +403,37 @@ class WalkForwardOptimizer:
         def _col(text, width=10, align="<"):
             return f"{str(text):{align}{width}}"
 
-        print(f"\n\n{'=' * 80}")
-        print(f" WFV AUDIT REPORT: {report.strategy_name} @ {report.symbol}")
-        print(f"{'=' * 80}")
+        lines: List[str] = []
+        lines.append(f"\n\n{'=' * 80}")
+        lines.append(f" WFV AUDIT REPORT: {report.strategy_name} @ {report.symbol}")
+        lines.append(f"{'=' * 80}")
 
         # 1. High Level Summary
-        print(f"\n[EXECUTIVE SUMMARY]")
-        print(f"  Verdict:        {report.verdict}")
-        print(
+        lines.append(f"\n[EXECUTIVE SUMMARY]")
+        lines.append(f"  Verdict:        {report.verdict}")
+        lines.append(
             f"  Median OOS:     {report.median_oos_score:.4f} (Composite Score)"
         )
-        print(
+        lines.append(
             f"  Perf Decay:     {report.median_degradation:+.1%} (IS -> OOS)"
         )
-        print(
+        lines.append(
             f"  Skeptic Confidence (DSR): {report.avg_dsr:.0%} "
             f"(Prob. Skill > Noise)"
         )
-        
-        print(f"\n[COMPUTATIONAL PROFILE]")
-        print(f"  Total WFO Runtime: {report.total_wfo_time_sec / 60:.1f} mins")
-        print(f"  Average Fold Time: {report.avg_fold_time_sec:.1f} secs")
-        print(f"  Average Trial Time: {report.avg_trial_time_sec:.3f} secs")
+
+        lines.append(f"\n[COMPUTATIONAL PROFILE]")
+        lines.append(f"  Total WFO Runtime: {report.total_wfo_time_sec / 60:.1f} mins")
+        lines.append(f"  Average Fold Time: {report.avg_fold_time_sec:.1f} secs")
+        lines.append(f"  Average Trial Time: {report.avg_trial_time_sec:.3f} secs")
 
         if report.warnings:
-            print(f"\n[RISK FLAGS]")
+            lines.append(f"\n[RISK FLAGS]")
             for w in report.warnings:
-                print(f"  ! {w}")
+                lines.append(f"  ! {w}")
 
         # 2. Fold Detail
-        print(f"\n[FOLD ANALYSIS]")
+        lines.append(f"\n[FOLD ANALYSIS]")
         header = (
             f"{_col('Fold', 4)} | "
             f"{_col('Period', 22)} | "
@@ -414,8 +443,8 @@ class WalkForwardOptimizer:
             f"{_col('Visual', 12)} | "
             f"{_col('DD%', 6)}"
         )
-        print(header)
-        print("-" * len(header))
+        lines.append(header)
+        lines.append("-" * len(header))
 
         for f in report.fold_results:
             if f.degradation < -0.5:
@@ -426,7 +455,7 @@ class WalkForwardOptimizer:
             dd_val = f.oos_stats.get("max_drawdown", 0)
             dd_str = f"{dd_val:.1f}"
 
-            print(
+            lines.append(
                 f"{_col(str(f.fold_id), 4)} | "
                 f"{_col(f'{f.test_start}..', 22)} | "
                 f"{_col(f'{f.is_score:.2f}', 8)} | "
@@ -438,11 +467,16 @@ class WalkForwardOptimizer:
 
         # 3. Params
         if report.candidate_params:
-            print(f"\n[CANDIDATE PARAMETERS]")
-            print(f"  {report.candidate_params}")
+            lines.append(f"\n[CANDIDATE PARAMETERS]")
+            lines.append(f"  {report.candidate_params}")
         else:
-            print(
+            lines.append(
                 "\n[NO CANDIDATE PARAMETERS] Strategy failed stability checks."
             )
 
-        print(f"{'=' * 80}\n")
+        lines.append(f"{'=' * 80}\n")
+        return "\n".join(lines)
+
+    def _print_human_report(self, report: WFVReport) -> None:
+        """Prints the standard Quant-style WFO report."""
+        print(self.format_human_report(report))

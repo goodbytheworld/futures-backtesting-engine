@@ -20,7 +20,7 @@ from typing import Callable
 
 from fastapi.testclient import TestClient
 
-from src.backtest_engine.analytics.terminal_ui.app import create_terminal_dashboard_app
+from src.backtest_engine.runtime.terminal_ui.app import create_terminal_dashboard_app
 
 
 # ---------------------------------------------------------------------------

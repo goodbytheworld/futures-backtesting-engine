@@ -179,7 +179,7 @@ python run.py --wfo --strategy mean_rev
 - Single runs write artifacts to `results/`.
 - Portfolio runs write artifacts to `results/portfolio/`.
 - Scenario reruns write namespaced artifacts under `results/scenarios/`.
-- The active web dashboard is the FastAPI terminal UI in `src/backtest_engine/analytics/terminal_ui/`.
+- The active web dashboard is the FastAPI terminal UI in `src/backtest_engine/runtime/terminal_ui/`.
 
 ## Future Improvements
 

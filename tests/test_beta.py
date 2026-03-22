@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy import stats
-from src.backtest_engine.analytics.dashboard.core.data_layer import load_result_bundle
+from src.backtest_engine.services.artifact_service import load_result_bundle
 
 def debug_beta():
     bundle = load_result_bundle()

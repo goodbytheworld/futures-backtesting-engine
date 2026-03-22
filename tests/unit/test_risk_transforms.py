@@ -8,13 +8,13 @@ import math
 
 import pandas as pd
 
-from src.backtest_engine.analytics.dashboard.core.transforms import (
+from src.backtest_engine.analytics.shared.transforms import (
     build_risk_profile,
     build_strategy_equity_curve,
     compute_drawdown_episodes,
     compute_stress_scenarios,
 )
-from src.backtest_engine.analytics.dashboard.risk_analysis.models import StressMultipliers
+from src.backtest_engine.analytics.shared.risk_models import StressMultipliers
 
 
 def test_build_strategy_equity_curve_uses_slot_weight_and_fills_nans() -> None:

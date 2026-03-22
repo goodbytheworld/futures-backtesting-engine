@@ -18,14 +18,14 @@ from typing import Callable
 import pandas as pd
 from fastapi.testclient import TestClient
 
-from src.backtest_engine.analytics.dashboard.core.data_layer import ResultBundle
-from src.backtest_engine.analytics.dashboard.risk_analysis.models import StressMultipliers
-from src.backtest_engine.analytics.terminal_ui.app import create_terminal_dashboard_app
-from src.backtest_engine.analytics.terminal_ui.chart_builders import (
+from src.backtest_engine.services.artifact_service import ResultBundle
+from src.backtest_engine.analytics.shared.risk_models import StressMultipliers
+from src.backtest_engine.runtime.terminal_ui.app import create_terminal_dashboard_app
+from src.backtest_engine.runtime.terminal_ui.chart_builders import (
     build_equity_chart_payload,
     build_pnl_distribution_payload,
 )
-from src.backtest_engine.analytics.terminal_ui.service import (
+from src.backtest_engine.runtime.terminal_ui.service import (
     _build_risk_profile_for_scope,
     load_terminal_bundle,
     load_terminal_runtime_context,

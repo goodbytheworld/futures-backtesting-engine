@@ -32,6 +32,14 @@ class BacktestSettings(BaseSettings):
     base_dir: Path = Path(__file__).parent.parent.parent
     cache_dir: Path = Field(default=Path("data/cache"), description="Parquet cache location")
     results_dir: Path = Field(default=Path("results"), description="Output directory for reports")
+    batch_results_dir: Path = Field(
+        default=Path("results/batch"),
+        description="Output namespace reserved for lightweight batch analytics runs.",
+    )
+    wfo_batch_results_dir: Path = Field(
+        default=Path("results/wfo_batch"),
+        description="Output namespace reserved for walk-forward batch candidate exports.",
+    )
     terminal_redis_url: Optional[str] = Field(
         default="redis://127.0.0.1:6379/0",
         description="Redis URL for terminal job queueing. Defaults to local Redis on port 6379.",
@@ -134,10 +142,40 @@ class BacktestSettings(BaseSettings):
     wfo_prune_max_dd_pct: float = 35.0    # Max drawdown % before early pruning
     wfo_prune_target_trades_mult: int = 3  # target_trades = min_trades * this
 
+    # Lightweight batch orchestration
+    batch_max_workers: int = Field(
+        default=4,
+        description="Default worker count for batch and WFO-batch orchestration.",
+    )
+    batch_progress_bar_width: int = Field(
+        default=32,
+        description="Character width used by CLI batch progress bars.",
+    )
+    batch_plot_figure_width: float = Field(
+        default=16.0,
+        description="Default Matplotlib figure width for lightweight batch analytics plots.",
+    )
+    batch_plot_figure_height: float = Field(
+        default=9.0,
+        description="Default Matplotlib figure height for lightweight batch analytics plots.",
+    )
+
     # ── Path helpers ───────────────────────────────────────────────────────────
     def get_results_path(self) -> Path:
         """Creates and returns the results directory path."""
         path = self.base_dir / self.results_dir
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_batch_results_path(self) -> Path:
+        """Creates and returns the lightweight batch results directory."""
+        path = self.base_dir / self.batch_results_dir
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def get_wfo_batch_results_path(self) -> Path:
+        """Creates and returns the WFO batch results directory."""
+        path = self.base_dir / self.wfo_batch_results_dir
         path.mkdir(parents=True, exist_ok=True)
         return path
 

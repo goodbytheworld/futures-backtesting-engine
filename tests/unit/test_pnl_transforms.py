@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.backtest_engine.analytics.dashboard.core.transforms import (
+from src.backtest_engine.analytics.shared.transforms import (
     build_bar_pnl_matrix,
     compute_strategy_decomp,
     compute_strategy_correlation,

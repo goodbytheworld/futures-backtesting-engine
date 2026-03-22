@@ -11,7 +11,7 @@ This is a Python-based, Institutional-Grade backtesting platform. It supports:
 1.  **Single-Asset Backtesting**: Individual strategy runs on single instruments.
 2.  **Walk-Forward Optimization (WFO)**: Systematic parameter robustness testing.
 3.  **Multi-Strategy Portfolio Backtesting**: Running multiple strategies concurrently with shared capital, dynamic allocation, and risk management.
-4.  **Analytics & Visualization**: A FastAPI terminal dashboard (`src/backtest_engine/analytics/terminal_ui/`) for PnL, risk, and scenario analysis. Launch via `python run.py --dashboard`.
+4.  **Analytics & Visualization**: A FastAPI terminal dashboard (`src/backtest_engine/runtime/terminal_ui/`) for PnL, risk, and scenario analysis. Launch via `python run.py --dashboard`.
 
 ---
 
@@ -30,7 +30,8 @@ The entry point is **`run.py`** at the project root. It purely parses arguments 
         *   `execution/`: Fills and ledger (`PortfolioBook`, `StrategyRunner`).
         *   `engine/`: `PortfolioBacktestEngine` containing the main event loop.
         *   `reporting/`: Result serialization (Parquet, JSON).
-    *   `analytics/`: Post-execution analytics. `terminal_ui/` is the active FastAPI dashboard; `dashboard/` contains legacy Streamlit code retained only for result comparison during development.
+    *   `analytics/`: Post-execution analytics layers. Contains `shared/` with pure transforms and risk models.
+    *   `runtime/terminal_ui/`: The active FastAPI dashboard and server runtime.
 *   **`src/strategies/`**: Trading logic.
     *   All strategies inherit from `BaseStrategy` (`base.py`).
     *   **Registry**: `registry.py` is the central mapping for CLI/YAML IDs (e.g., `"zscore"`) to class paths.
@@ -88,14 +89,14 @@ def calculate_target(self, signal: StrategySignal, equity: float) -> TargetPosit
 ```
 
 ### F. Analytics & Dashboard Rule
-The active dashboard is the **terminal UI** (`src/backtest_engine/analytics/terminal_ui/`).
+The active dashboard is the **terminal UI** (`src/backtest_engine/runtime/terminal_ui/`).
 
 *   `service.py` — pure data-loading and bundle-inspection layer. No I/O side-effects, no HTTP concerns. Fully unit-testable.
 *   `chart_builders.py` / `risk_builders.py` — pure Plotly payload builders. Return dicts; no HTTP dependencies.
 *   `routes_partials.py` / `routes_charts.py` / `routes_operations.py` — FastAPI route handlers. Thin: call service/builders, render Jinja2 templates or return JSON.
 *   `templates/` — Jinja2 HTML templates for server-side rendering.
 
-Legacy `analytics/dashboard/` (Streamlit) is retained only for development-time result comparison and will be removed once the terminal UI reaches feature parity.
+Legacy Streamlit dashboard has been removed. All shared models and pure transforms reside in `analytics/shared/`.
 
 ---
 

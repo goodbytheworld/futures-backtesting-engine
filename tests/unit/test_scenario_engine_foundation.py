@@ -6,12 +6,12 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from cli.portfolio import _resolve_replay_window_filters
-from src.backtest_engine.analytics.dashboard.core import scenario_runner
+from src.backtest_engine.services.portfolio_run_service import resolve_replay_window_filters as _resolve_replay_window_filters
+import src.backtest_engine.services.scenario_runner_service as scenario_runner
 from src.backtest_engine.settings import BacktestSettings
-from src.backtest_engine.analytics.dashboard.core.data_layer import ResultBundle
-from src.backtest_engine.analytics.dashboard.core.scenario_runner import build_stress_scenario_spec
-from src.backtest_engine.analytics.dashboard.risk_analysis.models import StressMultipliers
+from src.backtest_engine.services.artifact_service import ResultBundle
+from src.backtest_engine.services.scenario_runner_service import build_stress_scenario_spec
+from src.backtest_engine.analytics.shared.risk_models import StressMultipliers
 from src.backtest_engine.analytics.scenario_engine import (
     ArtifactFamily,
     BaselineReference,

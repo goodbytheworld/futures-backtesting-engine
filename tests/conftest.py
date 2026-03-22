@@ -7,7 +7,7 @@ from typing import Callable
 import pandas as pd
 import pytest
 
-from src.backtest_engine.analytics.terminal_ui.jobs import (
+from src.backtest_engine.services.scenario_job_service import (
     ScenarioJobMetadata,
     ScenarioJobStore,
 )
