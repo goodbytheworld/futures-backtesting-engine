@@ -205,6 +205,7 @@ def build_decomposition_table(
         history=bundle.history,
         slots=bundle.slots or {},
         tail_confidence=runtime.risk_config.var_confidence_primary,
+        exposure=bundle.exposure,
     )
     if table.empty:
         return table

@@ -25,11 +25,12 @@ class PortfolioBook:
     Central ledger for the portfolio backtest.
 
     Methodology:
-        Uses full notional cash accounting (no margin/leverage).
+        Uses futures-style margin accounting for portfolio cash and equity.
         Each position is tracked as a signed quantity keyed by (slot_id, symbol).
         Mark-to-market runs after every bar using the latest close prices.
-        The shared-capital invariant (cash + MtM == total_equity) must hold
-        at every snapshot.
+        The shared-capital invariant (cash + unrealized PnL == total_equity)
+        must hold at every snapshot. Full notional exposure is still preserved
+        separately for analytics.
 
     The _last_prices cache ensures gap bars (union-timeline holes) do not
     temporarily zero-value open positions.
@@ -51,6 +52,8 @@ class PortfolioBook:
 
         self.total_equity: float = initial_capital
         self.holdings_value: float = 0.0
+        self.margin_used: float = 0.0
+        self.gross_notional: float = 0.0
 
         # Per-slot accounting: cumulative realized PnL (closed trades)
         self.slot_realized_pnl: Dict[int, float] = {}
@@ -85,7 +88,7 @@ class PortfolioBook:
         Also updates slot-level realized PnL when a position is reduced or closed.
 
         Methodology:
-            Cash delta = -(signed_quantity * fill_price * multiplier) - commission
+            Cash changes only by realized PnL and commission.
             When reducing a position, realized PnL is computed against avg_price.
             Commission is always debited from realized PnL.
 
@@ -98,9 +101,6 @@ class PortfolioBook:
             multiplier: Instrument dollar multiplier.
             timestamp: Bar timestamp for PnL attribution.
         """
-        notional = quantity * fill_price * multiplier
-        self.cash -= notional + commission
-
         key = (slot_id, symbol)
         prev_qty = self.positions.get(key, 0.0)
         new_qty = prev_qty + quantity
@@ -109,19 +109,21 @@ class PortfolioBook:
         # ── Realized PnL accounting ────────────────────────────────────────────
         realized = self.slot_realized_pnl.get(slot_id, 0.0)
 
+        realized_change = 0.0
         if prev_qty != 0.0:
             avg = self.avg_prices.get(key, fill_price)
             # Closed or partially reduced portion
             closed_qty = min(abs(quantity), abs(prev_qty))
             if quantity < 0 and prev_qty > 0:
                 # Reducing a long
-                realized += closed_qty * (fill_price - avg) * multiplier
+                realized_change = closed_qty * (fill_price - avg) * multiplier
             elif quantity > 0 and prev_qty < 0:
                 # Covering a short
-                realized += closed_qty * (avg - fill_price) * multiplier
+                realized_change = closed_qty * (avg - fill_price) * multiplier
 
-        realized -= commission
+        realized += realized_change - commission
         self.slot_realized_pnl[slot_id] = realized
+        self.cash += realized_change - commission
 
         # ── Avg price maintenance ──────────────────────────────────────────────
         if abs(new_qty) < 1e-9:
@@ -147,7 +149,7 @@ class PortfolioBook:
         instrument_specs: Dict[str, Dict],
     ) -> None:
         """
-        Recomputes holdings_value, total_equity, and per-slot unrealized PnL.
+        Recomputes unrealized PnL, total_equity, and margin usage.
 
         Uses _last_prices cache so gap bars do not zero-value open positions.
 
@@ -156,6 +158,8 @@ class PortfolioBook:
             instrument_specs: Symbol → {multiplier, tick_size}.
         """
         self.holdings_value = 0.0
+        self.margin_used = 0.0
+        self.gross_notional = 0.0
         new_unrealized: Dict[int, float] = {}
 
         for (slot_id, symbol), qty in self.positions.items():
@@ -165,15 +169,17 @@ class PortfolioBook:
             if key in current_prices:
                 self._last_prices[key] = current_prices[key]
             price = self._last_prices.get(key, 0.0)
-            spec = instrument_specs.get(symbol, {"multiplier": 1.0})
+            spec = instrument_specs.get(symbol, {"multiplier": 1.0, "margin_ratio": 1.0})
             multiplier = spec["multiplier"]
+            margin_ratio = float(spec.get("margin_ratio", 1.0))
 
             avg = self.avg_prices.get((slot_id, symbol), price)
-            position_value = qty * price * multiplier
-            self.holdings_value += position_value
+            notional = abs(qty) * price * multiplier
+            self.gross_notional += notional
+            self.margin_used += notional * margin_ratio
 
-            # Unrealized PnL = current MtM - cost basis
             unrealized = qty * (price - avg) * multiplier
+            self.holdings_value += unrealized
             new_unrealized[slot_id] = new_unrealized.get(slot_id, 0.0) + unrealized
 
         self.slot_unrealized_pnl = new_unrealized
@@ -200,6 +206,8 @@ class PortfolioBook:
             "timestamp":   timestamp,
             "cash":        self.cash,
             "holdings":    self.holdings_value,
+            "margin_used": self.margin_used,
+            "gross_notional": self.gross_notional,
             "total_value": self.total_equity,
         }
 

@@ -13,8 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pandas as pd
+
 from src.backtest_engine.services.portfolio_run_service import (
     compute_data_version,
+    run_portfolio_backtest,
     parse_scenario_params,
     resolve_replay_window_filters,
     merge_scenario_manifest_metadata,
@@ -83,3 +86,87 @@ def test_merge_scenario_manifest_metadata_promotes_fields() -> None:
     )
     assert manifest["artifact_family"] == "scenarios"
     assert manifest["job_type"] == "stress_rerun"
+
+
+def test_run_portfolio_backtest_loads_duty_cycle_and_weight_expansion(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """YAML loader should propagate duty_cycle and max_weight_expansion into config."""
+    captured: dict = {}
+    cache_file = tmp_path / "ES_30m.parquet"
+    cache_file.write_text("cache", encoding="utf-8")
+    config_path = tmp_path / "portfolio.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "portfolio:",
+                "  rebalance_frequency: intrabar",
+                "  target_portfolio_vol: 0.20",
+                "  vol_lookback_bars: 15",
+                "  max_weight_expansion: 9.0",
+                "strategies:",
+                "  - strategy: sma",
+                "    symbols: [ES]",
+                "    weight: 1.0",
+                "    duty_cycle: 0.25",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class DummySettings:
+        initial_capital = 100_000.0
+        spread_mode = "static"
+        spread_ticks = 0.0
+        max_cache_staleness_days = 30
+
+    class DummyDataLake:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def validate_cache_requirements(self, requirements):
+            return []
+
+        def get_cache_file_path(self, symbol, timeframe):
+            return cache_file
+
+        def load(self, symbol, timeframe="30m"):
+            return pd.DataFrame()
+
+    class DummyEngine:
+        def __init__(self, config, settings, start_date=None, end_date=None) -> None:
+            captured["config"] = config
+
+        def run(self) -> None:
+            captured["ran"] = True
+
+        def show_results(self, benchmark=None, output_dir=None, manifest_metadata=None) -> None:
+            captured["manifest_metadata"] = manifest_metadata or {}
+
+    class DummyStrategy:
+        pass
+
+    monkeypatch.setattr(
+        "src.backtest_engine.portfolio_layer.engine.PortfolioBacktestEngine",
+        DummyEngine,
+    )
+    monkeypatch.setattr(
+        "src.strategies.registry.get_strategy_class_by_name",
+        lambda name: DummyStrategy,
+    )
+    monkeypatch.setattr(
+        "src.backtest_engine.settings.BacktestSettings",
+        DummySettings,
+    )
+    monkeypatch.setattr(
+        "src.data.data_lake.DataLake",
+        DummyDataLake,
+    )
+
+    run_portfolio_backtest(str(config_path))
+
+    config = captured["config"]
+    assert captured["ran"] is True
+    assert config.max_weight_expansion == 9.0
+    assert config.slots[0].expected_duty_cycle == 0.25

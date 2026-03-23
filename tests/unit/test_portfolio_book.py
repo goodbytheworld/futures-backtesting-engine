@@ -17,7 +17,7 @@ class TestApplyFill:
         b = _book()
         b.apply_fill(0, "ES", fill_price=4000.0, quantity=1, commission=2.5,
                      multiplier=50.0, timestamp=None)
-        assert b.cash == pytest.approx(100_000.0 - 4000.0 * 50.0 - 2.5)
+        assert b.cash == pytest.approx(100_000.0 - 2.5)
 
     def test_sell_to_flat_restores_cash(self):
         b = _book()

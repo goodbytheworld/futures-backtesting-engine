@@ -82,12 +82,6 @@ def calc_trade_stats(trades: List[Any]) -> Dict[str, float]:
         else float("inf") if gross_profit > 0 else 0.0
     )
 
-    # One-sample T-test: H0 = mean PnL == 0
-    t_stat: float = 0.0
-    p_val:  float = 1.0
-    if total_trades > 1 and np.std(pnls) > 0:
-        t_stat, p_val = stats.ttest_1samp(pnls, 0.0)
-
     return {
         "Total Trades":  total_trades,
         "Win Rate":      win_rate,
@@ -95,6 +89,4 @@ def calc_trade_stats(trades: List[Any]) -> Dict[str, float]:
         "Avg Trade":     sum(pnls) / total_trades,
         "Avg Win":       sum(winners) / len(winners) if winners else 0.0,
         "Avg Loss":      sum(losers)  / len(losers)  if losers  else 0.0,
-        "T-Statistic":   t_stat,
-        "P-Value":       p_val,
     }

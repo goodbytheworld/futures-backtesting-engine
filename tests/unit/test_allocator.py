@@ -17,6 +17,8 @@ def _config(
     target_vol: float = 0.10,
     vol_lookback: int = 5,
     max_contracts: int = 10,
+    duty_cycle: float = 1.0,
+    max_weight_expansion: float = 4.0,
 ) -> PortfolioConfig:
     from src.strategies.sma_crossover import SmaCrossoverStrategy
     return PortfolioConfig(
@@ -24,11 +26,13 @@ def _config(
             strategy_class=SmaCrossoverStrategy,
             symbols=["ES"] * n_symbols,
             weight=weight,
+            expected_duty_cycle=duty_cycle,
         )],
         initial_capital=100_000.0,
         rebalance_frequency="intrabar",
         target_portfolio_vol=target_vol,
         vol_lookback_bars=vol_lookback,
+        max_weight_expansion=max_weight_expansion,
         max_contracts_per_slot=max_contracts,
     )
 
@@ -113,10 +117,77 @@ class TestComputeTargets:
         alloc = Allocator(_config())
 
         raw_contracts = alloc._compute_raw_contracts(
-            equity=100_000.0,
+            annual_risk_budget=10_000.0,
             price=5_000.0,
             multiplier=50.0,
             annualised_vol=0.20,
         )
 
         assert math.isclose(raw_contracts, 0.2, rel_tol=1e-9), raw_contracts
+
+    def test_duty_cycle_scales_up_sizing(self, monkeypatch: pytest.MonkeyPatch):
+        """A 25% expected duty cycle should double sizing before any cap binds."""
+        base_alloc = Allocator(_config(max_contracts=100, duty_cycle=1.0))
+        boosted_alloc = Allocator(_config(max_contracts=100, duty_cycle=0.25))
+        monkeypatch.setattr(base_alloc, "_estimate_vol", lambda *args, **kwargs: 1.0)
+        monkeypatch.setattr(boosted_alloc, "_estimate_vol", lambda *args, **kwargs: 1.0)
+
+        signal = [_signal(direction=1)]
+        prices = {"ES": 100.0}
+        hist = _price_history()
+
+        base_target = base_alloc.compute_targets(signal, 100_000.0, prices, SPECS, hist)[0]
+        boosted_target = boosted_alloc.compute_targets(signal, 100_000.0, prices, SPECS, hist)[0]
+
+        assert boosted_target.target_qty == 2 * base_target.target_qty
+
+    def test_max_weight_expansion_caps_duty_cycle_multiplier(self, monkeypatch: pytest.MonkeyPatch):
+        """Extreme low duty cycle must not expand sizing beyond sqrt(max_weight_expansion)."""
+        capped_alloc = Allocator(
+            _config(max_contracts=100, duty_cycle=0.01, max_weight_expansion=4.0)
+        )
+        reference_alloc = Allocator(
+            _config(max_contracts=100, duty_cycle=0.25, max_weight_expansion=4.0)
+        )
+        monkeypatch.setattr(capped_alloc, "_estimate_vol", lambda *args, **kwargs: 1.0)
+        monkeypatch.setattr(reference_alloc, "_estimate_vol", lambda *args, **kwargs: 1.0)
+
+        signal = [_signal(direction=1)]
+        prices = {"ES": 100.0}
+        hist = _price_history()
+
+        capped_target = capped_alloc.compute_targets(signal, 100_000.0, prices, SPECS, hist)[0]
+        reference_target = reference_alloc.compute_targets(signal, 100_000.0, prices, SPECS, hist)[0]
+
+        assert capped_target.target_qty == reference_target.target_qty
+
+
+class TestPortfolioConfigValidation:
+    def test_weight_sum_tolerance_allows_small_rounding_error(self):
+        from src.strategies.sma_crossover import SmaCrossoverStrategy
+
+        config = PortfolioConfig(
+            slots=[
+                StrategySlot(strategy_class=SmaCrossoverStrategy, symbols=["ES"], weight=0.50),
+                StrategySlot(strategy_class=SmaCrossoverStrategy, symbols=["NQ"], weight=0.495),
+            ],
+            initial_capital=100_000.0,
+            rebalance_frequency="intrabar",
+        )
+
+        config.validate()
+
+    def test_weights_must_sum_to_one(self):
+        from src.strategies.sma_crossover import SmaCrossoverStrategy
+
+        config = PortfolioConfig(
+            slots=[
+                StrategySlot(strategy_class=SmaCrossoverStrategy, symbols=["ES"], weight=0.60),
+                StrategySlot(strategy_class=SmaCrossoverStrategy, symbols=["NQ"], weight=0.38),
+            ],
+            initial_capital=100_000.0,
+            rebalance_frequency="intrabar",
+        )
+
+        with pytest.raises(ValueError, match="weights must sum to 1.0"):
+            config.validate()

@@ -154,10 +154,11 @@ def run_portfolio_backtest(
     Loads a YAML portfolio config and runs PortfolioBacktestEngine.
 
     Methodology:
-        Reads the YAML once with safe_load.  Portfolio-specific fields
-        (target_portfolio_vol, vol_lookback_bars, max_contracts_per_slot,
-        rebalance_frequency) come from the YAML.  Shared execution settings
-        (commission_rate, spread_ticks, spread_mode, initial_capital,
+        Reads the YAML once with safe_load. Portfolio-specific fields
+        (target_portfolio_vol, vol_lookback_bars, max_weight_expansion,
+        max_contracts_per_slot, rebalance_frequency) and slot-level
+        expected_duty_cycle values come from the YAML. Shared execution
+        settings (commission_rate, spread_ticks, spread_mode, initial_capital,
         kill-switch thresholds) are read from BacktestSettings (settings.py).
 
     Args:
@@ -205,10 +206,16 @@ def run_portfolio_backtest(
                 strategy_class=strategy_cls,
                 symbols=slot_cfg["symbols"],
                 weight=slot_cfg["weight"],
+                expected_duty_cycle=float(slot_cfg.get("duty_cycle", 1.0)),
                 timeframe=slot_cfg.get("timeframe", "30m"),
                 params=slot_cfg.get("params", {}),
             )
         )
+
+    raw_max_contracts = portfolio_cfg.get("max_contracts_per_slot")
+    max_contracts_per_slot = (
+        None if raw_max_contracts is None else int(raw_max_contracts)
+    )
 
     config = PortfolioConfig(
         slots=slots,
@@ -216,7 +223,8 @@ def run_portfolio_backtest(
         rebalance_frequency=portfolio_cfg.get("rebalance_frequency", "intrabar"),
         target_portfolio_vol=portfolio_cfg.get("target_portfolio_vol", 0.10),
         vol_lookback_bars=int(portfolio_cfg.get("vol_lookback_bars", 20)),
-        max_contracts_per_slot=int(portfolio_cfg.get("max_contracts_per_slot", 3)),
+        max_weight_expansion=float(portfolio_cfg.get("max_weight_expansion", 4.0)),
+        max_contracts_per_slot=max_contracts_per_slot,
         benchmark_symbol=portfolio_cfg.get("benchmark_symbol", "ES") or None,
     )
 

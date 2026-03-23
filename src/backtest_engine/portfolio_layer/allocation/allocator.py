@@ -8,15 +8,27 @@ price history, compute TargetPosition quantities for each (slot, symbol) pair
 using volatility-targeting methodology.
 
 Methodology (per slot, per symbol):
-    1.  slot_equity        = total_equity * slot.weight
-    2.  instrument_vol     = annualised rolling stddev of close-to-close returns
+    1.  dc_multiplier      = min(1 / sqrt(expected_duty_cycle),
+                                 sqrt(max_weight_expansion))
+    2.  slot_risk_budget   = (total_equity * target_portfolio_vol
+                              * sqrt(slot.weight) * dc_multiplier)
+    3.  ticker_risk_budget = slot_risk_budget / number_of_symbols_in_slot
+    4.  instrument_vol     = annualised rolling stddev of close-to-close returns
                              over the last vol_lookback_bars bars.
-    3.  annual_dollar_risk = slot_equity * target_portfolio_vol
-    4.  contract_dollar_vol = instrument_vol * price * multiplier
-    5.  raw_contracts      = annual_dollar_risk / contract_dollar_vol
-    6.  contracts          = round(raw_contracts)
-    7.  contracts          = min(contracts, max_contracts_per_slot)
-    8.  signed_qty         = contracts * signal.direction
+    5.  contract_dollar_vol = instrument_vol * price * multiplier
+    6.  raw_contracts      = ticker_risk_budget / contract_dollar_vol
+    7.  contracts          = round(raw_contracts)
+    8.  contracts          = min(contracts, margin_capacity_contracts)
+    9.  contracts          = min(contracts, max_contracts_per_slot) if cap is set
+    10. signed_qty         = contracts * signal.direction
+
+IMPORTANT - Zero Cross-Correlation Assumption:
+    Slot weights are aggregated via sqrt(weight) scaling, which is correct only
+    when slot returns are uncorrelated (IID baseline from Modern Portfolio
+    Theory). For correlated instruments (for example ES and NQ), simultaneous
+    drawdowns can cause realized portfolio volatility to exceed
+    target_portfolio_vol. Correlation-adjusted overlays belong in the future
+    PortfolioRiskOverlay layer.
 
 The key denominator is the annualised dollar volatility of one full contract:
 `annualised_vol * price * multiplier`. Tick size is relevant for execution and
@@ -27,7 +39,7 @@ targeted contract sizing.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -45,13 +57,15 @@ class Allocator:
     """
     Converts strategy signals into sized target contract quantities.
 
-    Uses volatility-targeting: each slot's equity is scaled by the ratio of
-    the target annualised vol to the instrument's realised vol, so the
-    expected portfolio volatility matches target_portfolio_vol regardless of
-    regime.
+    Uses volatility-targeting with slot risk budgets. Slot weights are treated
+    as portfolio risk weights, not as a second capital haircut on the target
+    volatility itself. For an equal-risk portfolio, each slot receives
+    `target_portfolio_vol * sqrt(weight)` of standalone annualised volatility
+    before any static duty-cycle normalization is applied.
 
-    A hard cap of max_contracts_per_slot prevents runaway sizing in
-    low-volatility regimes.
+    A simple margin-capacity gate prevents the target quantity from exceeding
+    what the slot equity can realistically support in live futures trading.
+    An optional hard cap can still be applied from config when desired.
     """
 
     def __init__(self, config: PortfolioConfig) -> None:
@@ -76,7 +90,7 @@ class Allocator:
         Computes desired target positions for all active signals.
 
         Methodology:
-            See module docstring for the full five-step formula.
+            See the module docstring for the full sizing formula.
             If instrument vol cannot be estimated (insufficient history or
             zero variance), falls back to 1 contract to avoid zero allocation.
             A zero-direction signal always produces target_qty = 0 (flat).
@@ -98,17 +112,44 @@ class Allocator:
             slot      = self._config.slots[sig.slot_id]
             n_tickers = len(slot.symbols)
 
-            # Each ticker in the slot gets an equal share of the slot equity.
-            slot_equity        = total_equity * slot.weight
-            equity_per_ticker  = slot_equity / n_tickers if n_tickers > 0 else 0.0
+            # Use weights as portfolio risk budgets. If one slot trades multiple
+            # symbols, split that slot-level risk and margin capacity equally.
+            slot_weight = float(slot.weight)
+            duty_cycle = max(float(slot.expected_duty_cycle), 1e-4)
+            max_expansion = float(self._config.max_weight_expansion)
+            dc_multiplier = min(
+                1.0 / math.sqrt(duty_cycle),
+                math.sqrt(max_expansion),
+            )
+            slot_risk_budget = (
+                total_equity
+                * self._config.target_portfolio_vol
+                * math.sqrt(slot_weight)
+                * dc_multiplier
+                if slot_weight > 0.0
+                else 0.0
+            )
+            risk_budget_per_ticker = slot_risk_budget / n_tickers if n_tickers > 0 else 0.0
+            margin_equity_per_ticker = (total_equity * slot_weight) / n_tickers if n_tickers > 0 else 0.0
 
             price     = current_prices.get(sig.symbol, 0.0)
-            spec      = instrument_specs.get(sig.symbol, {"multiplier": 1.0, "tick_size": 0.01})
+            spec      = instrument_specs.get(
+                sig.symbol,
+                {"multiplier": 1.0, "tick_size": 0.01, "margin_ratio": 1.0},
+            )
             multiplier = float(spec.get("multiplier", 1.0))
+            margin_ratio = float(spec.get("margin_ratio", 1.0))
 
-            if price > 0 and multiplier > 0 and sig.direction != 0:
+            if price > 0 and multiplier > 0 and margin_ratio > 0 and sig.direction != 0:
                 vol = self._estimate_vol(sig.slot_id, sig.symbol, price_history, bars_per_year)
-                contracts = self._size_contracts(equity_per_ticker, price, multiplier, vol)
+                contracts = self._size_contracts(
+                    risk_budget_per_ticker,
+                    margin_equity_per_ticker,
+                    price,
+                    multiplier,
+                    margin_ratio,
+                    vol,
+                )
             else:
                 contracts = 0
 
@@ -168,7 +209,7 @@ class Allocator:
 
     def _compute_raw_contracts(
         self,
-        equity: float,
+        annual_risk_budget: float,
         price: float,
         multiplier: float,
         annualised_vol: float,
@@ -178,14 +219,16 @@ class Allocator:
 
         Methodology:
             `annualised_vol` is expected to already be annualized by
-            `_estimate_vol()`. The annualized dollar risk budget is
-            `equity * target_portfolio_vol`, and one contract contributes
+            `_estimate_vol()`. `annual_risk_budget` is the full annualized
+            dollar-volatility budget already assigned to this (slot, ticker),
+            and one contract contributes
             `annualised_vol * price * multiplier` of annualized dollar
             volatility. Rounding and hard caps are applied only after this raw
             quantity is computed so the mathematical target remains testable.
 
         Args:
-            equity: Dollars allocated to this (slot, ticker).
+            annual_risk_budget: Annualized dollar-volatility budget for this
+                (slot, ticker).
             price: Current close price of the instrument.
             multiplier: Contract multiplier used to convert price moves to dollars.
             annualised_vol: Estimated annualized volatility (e.g. 0.15).
@@ -193,21 +236,22 @@ class Allocator:
         Returns:
             Continuous contract quantity before integer conversion.
         """
-        if equity <= 0.0 or price <= 0.0 or multiplier <= 0.0 or annualised_vol <= 0.0:
+        if annual_risk_budget <= 0.0 or price <= 0.0 or multiplier <= 0.0 or annualised_vol <= 0.0:
             return 0.0
 
-        annual_dollar_risk = equity * self._config.target_portfolio_vol
         contract_dollar_vol = annualised_vol * price * multiplier
         if contract_dollar_vol <= 0.0:
             return 0.0
 
-        return max(0.0, annual_dollar_risk / contract_dollar_vol)
+        return max(0.0, annual_risk_budget / contract_dollar_vol)
 
     def _size_contracts(
         self,
-        equity: float,
+        annual_risk_budget: float,
+        margin_equity: float,
         price: float,
         multiplier: float,
+        margin_ratio: float,
         annualised_vol: float,
     ) -> int:
         """
@@ -216,24 +260,36 @@ class Allocator:
         Methodology:
             First compute the continuous vol-target contract quantity from the
             annualized risk budget and the annualized dollar volatility of one
-            contract. Integer rounding happens after the raw quantity is
-            computed, and the hard cap is applied last.
+            contract. The resulting quantity is then clipped by a simple
+            margin-capacity limit based on `price * multiplier * margin_ratio`.
+            An optional hard cap is applied last.
 
         Args:
-            equity: Dollars allocated to this (slot, ticker).
+            annual_risk_budget: Annualized dollar volatility budget for this
+                (slot, ticker).
+            margin_equity: Dollar capital reserved to support margin for this
+                (slot, ticker).
             price: Current close price of the instrument.
             multiplier: Contract multiplier used to convert price moves to dollars.
+            margin_ratio: Fraction of notional required as margin.
             annualised_vol: Estimated annualized volatility (e.g. 0.15).
 
         Returns:
-            Integer contract count (>= 0), rounded then capped at
-            max_contracts_per_slot.
+            Integer contract count (>= 0), rounded and constrained by
+            margin capacity plus the optional max_contracts_per_slot.
         """
         raw_contracts = self._compute_raw_contracts(
-            equity=equity,
+            annual_risk_budget=annual_risk_budget,
             price=price,
             multiplier=multiplier,
             annualised_vol=annualised_vol,
         )
         contracts = max(0, round(raw_contracts))
-        return min(contracts, self._config.max_contracts_per_slot)
+        margin_per_contract = price * multiplier * margin_ratio
+        if margin_per_contract > 0.0:
+            contracts = min(contracts, max(0, math.floor(margin_equity / margin_per_contract)))
+
+        if self._config.max_contracts_per_slot is not None:
+            contracts = min(contracts, self._config.max_contracts_per_slot)
+
+        return contracts

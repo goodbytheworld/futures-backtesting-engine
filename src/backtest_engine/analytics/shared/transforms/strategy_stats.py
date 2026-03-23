@@ -4,6 +4,8 @@ from typing import Dict, Optional
 
 import pandas as pd
 
+import scipy.stats as stats
+
 from src.backtest_engine.analytics.trades import calc_trade_stats
 
 
@@ -101,6 +103,13 @@ def compute_strategy_stats(
         )
         max_loss = float(pnls.min()) if not pnls.empty else 0.0
 
+        t_stat = 0.0
+        p_val = 1.0
+        if len(pnls) > 1 and float(pnls.std()) > 0:
+            t_s, p_v = stats.ttest_1samp(pnls, 0.0)
+            t_stat = float(t_s)
+            p_val = float(p_v)
+
         rows.append(
             {
                 "Strategy": strategy_name,
@@ -108,8 +117,8 @@ def compute_strategy_stats(
                 "Win Rate %": float(trade_stats["Win Rate"]) * 100.0,
                 "Avg Trade ($)": float(trade_stats["Avg Trade"]),
                 "Max Loss ($)": max_loss,
-                "T-Stat": float(trade_stats["T-Statistic"]),
-                "P-Value": float(trade_stats["P-Value"]),
+                "T-Stat": t_stat,
+                "P-Value": p_val,
             }
         )
 

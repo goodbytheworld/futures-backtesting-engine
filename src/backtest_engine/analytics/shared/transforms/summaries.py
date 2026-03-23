@@ -14,6 +14,7 @@ def compute_strategy_decomp(
     history: pd.DataFrame,
     slots: Dict[str, str],
     tail_confidence: float = 0.95,
+    exposure: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """
     Builds the Strategy PnL Decomposition table.
@@ -121,6 +122,22 @@ def compute_strategy_decomp(
 
     ann_factor = np.sqrt(252.0)
 
+    # ── 3.5. Observed Duty Cycle from Exposure ────────────────────────────────
+    duty_cycles: Dict[str, float] = {}
+    if exposure is not None and not exposure.empty:
+        # slots is {slot_id: strat_name}
+        name_to_id = {v: str(k) for k, v in slots.items()}
+        for strat_name in strat_mtm_pnl.index:
+            slot_id_str = name_to_id.get(strat_name)
+            if slot_id_str is not None:
+                prefix = f"slot_{slot_id_str}_"
+                notional_cols = [c for c in exposure.columns if c.startswith(prefix) and c.endswith("_notional")]
+                if notional_cols:
+                    total_notional = exposure[notional_cols].abs().sum(axis=1)
+                    max_not = float(total_notional.max())
+                    if max_not > 1e-9:
+                        duty_cycles[strat_name] = float(((total_notional / max_not) ** 2).mean())
+
     # ── 4. Assemble rows ──────────────────────────────────────────────────────
     rows: List[dict] = []
     for name in strat_mtm_pnl.index:
@@ -165,6 +182,8 @@ def compute_strategy_decomp(
         roll_mean = float(daily_strat_pnl.mean())
         sharpe_val = (roll_mean / roll_std * ann_factor) if roll_std > 1e-8 else float("nan")
 
+        obs_dc = duty_cycles.get(name, float("nan"))
+
         rows.append({
             "Strategy":             name,
             "Daily PnL Sharpe-like": round(sharpe_val, 2) if not np.isnan(sharpe_val) else float("nan"),
@@ -175,6 +194,7 @@ def compute_strategy_decomp(
             "Tail PnL (CVaR)":      round(tail_pnl, 0) if not np.isnan(tail_pnl) else float("nan"),
             "Signal PnL ($)":       signal_pnl,
             "Exec Cost ($)":        actual_exec_cost,
+            "Obs. Duty Cycle":      round(obs_dc, 4) if not np.isnan(obs_dc) else float("nan"),
         })
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()

@@ -11,40 +11,49 @@
 #   Strategy signals still evaluate every bar (intraday).
 #
 # Sizing methodology:
-#   Vol-targeting: each slot receives (equity * weight) dollars, then converts
-#   the annualized risk budget into contracts using the annualized dollar
-#   volatility of one full contract:
+#   Vol-targeting: each slot receives a standalone risk budget scaled by
+#   sqrt(weight). That budget can be statically expanded for low-duty-cycle
+#   slots using:
+#       dc_multiplier = min(1 / sqrt(duty_cycle), sqrt(max_weight_expansion))
+#   Contracts are then computed from the annualized dollar volatility of one
+#   full contract:
 #       contracts = round(
-#           (slot_equity * target_portfolio_vol)
+#           (equity * target_portfolio_vol * sqrt(weight) * dc_multiplier)
 #           / (annualised_vol * price * multiplier)
 #       )
-#   Result is capped at max_contracts_per_slot per (slot, symbol).
+#   Result is clipped by simple margin capacity and can be additionally capped
+#   by max_contracts_per_slot when that field is not null.
 #
 # Shared settings (commission_rate, spread_ticks, spread_mode, kill-switch thresholds,
-# eod_close_time, trading hours) live in settings.py — no duplication here.
+# eod_close_time, trading hours) live in settings.py - no duplication here.
 
 portfolio:
-  rebalance_frequency: intrabar          # intrabar | daily | weekly
-  benchmark_symbol: ES                # Buy-and-hold benchmark shown in dashboard (null to disable)
+  rebalance_frequency: intrabar        # intrabar | daily | weekly
+  benchmark_symbol: ES                 # Buy-and-hold benchmark shown in dashboard (null to disable)
 
-  # ── Vol-targeting ─────────────────────────────────────────────────────────
-  target_portfolio_vol: 0.25          # Annualised portfolio vol target (25 %)
-  vol_lookback_bars: 20               # Rolling window (bars) for realised vol estimate
-  max_contracts_per_slot: 3           # Hard cap on contracts per (slot, symbol)
+  # Vol-targeting
+  target_portfolio_vol: 0.25           # Annualised portfolio vol target (25%)
+  vol_lookback_bars: 20                # Rolling window (bars) for realised vol estimate
+  max_weight_expansion: 4.0            # Duty-cycle sizing cap; 4.0 means at most 2x expansion
+  max_contracts_per_slot: null         # Optional hard cap on contracts per (slot, symbol)
 
 strategies:
-
   - strategy: stat_level
     symbols:
-      - YM
+      - GC
     weight: 0.20
+    duty_cycle: 0.0296                    
     timeframe: 30m
     params: {}
+    
+  #duty_call, to find out correclty on first test, set to 1.0!
+  #then, when you get exact data(see manual below), update it.
 
   - strategy: sma
     symbols:
       - YM
     weight: 0.20
+    duty_cycle: 0.0183                  
     timeframe: 30m
     params: {}
 
@@ -52,19 +61,28 @@ strategies:
     symbols:
       - RTY
     weight: 0.20
+    duty_cycle: 0.013
     timeframe: 30m
     params: {}
 
   - strategy: sma_pullback
     symbols:
-      - YM
+      - GC
     weight: 0.20
+    duty_cycle: 0.0441
     timeframe: 30m
     params: {}
 
-  - strategy: sma
+  - strategy: ict_ob
     symbols:
-      - GC
+      - SI
     weight: 0.20
+    duty_cycle: 0.0096
     timeframe: 30m
     params: {}
+
+# HOW TO FIND THE RIGHT DUTY CYCLE:
+# 1. Start with `duty_cycle: 1.0` for your new strategy.
+# 2. Run your portfolio backtest using the UI dashboard (`python run.py --portfolio-backtest --dashboard`).
+# 3. Check the "Obs. Duty Cycle" column in the "Decomposition" tab.
+# 4. Paste that number back into this file under your strategy's `duty_cycle`.

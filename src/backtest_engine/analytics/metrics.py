@@ -267,3 +267,26 @@ def calc_dsr(
 
     dsr = stats.norm.cdf((sample_sharpe - sr_star) / sigma_sr)
     return float(dsr)
+
+
+def calc_return_stats(returns: pd.Series) -> tuple[float, float]:
+    """
+    Calculates the T-Statistic and P-Value of the return series.
+
+    Methodology:
+        Uses a one-sample T-test (H0: mean return == 0) to determine
+        if the strategy's mean per-period return is statistically
+        distinguishable from zero.
+
+    Args:
+        returns: Per-bar return series.
+
+    Returns:
+        Tuple of (T-Statistic, P-Value).
+    """
+    clean_returns = returns.dropna()
+    if len(clean_returns) < 2 or float(clean_returns.std()) == 0.0:
+        return 0.0, 1.0
+
+    t_stat, p_val = stats.ttest_1samp(clean_returns, 0.0)
+    return float(t_stat), float(p_val)

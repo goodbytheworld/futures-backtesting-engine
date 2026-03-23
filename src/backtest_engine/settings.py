@@ -62,7 +62,8 @@ class BacktestSettings(BaseSettings):
     initial_capital: float = 1_000_000.0
     risk_free_rate: float = 0.02
     commission_rate: float = 2.5      # Per contract, in dollars
-    fixed_qty: int = 1                # Default number of contracts per signal
+    fixed_qty: int = 1                # Default number of contracts per signal (for single strategy mode)
+    portfolio_margin_ratio: float = 0.10  # Simple futures margin proxy for portfolio mode
 
     # ── Deterministic spread model ─────────────────────────────────────────────
     # Controls how fill-price adjustments are computed.  No random component.
@@ -159,6 +160,17 @@ class BacktestSettings(BaseSettings):
         default=9.0,
         description="Default Matplotlib figure height for lightweight batch analytics plots.",
     )
+    batch_equity_floor_pct: float = Field(
+        default=-100.0,
+        description="Lower bound for displayed batch PnL and drawdown percentages.",
+    )
+    batch_plot_ruin_equity_ratio: float = Field(
+        default=0.01,
+        description=(
+            "Positive log-chart surrogate used once batch equity reaches or "
+            "falls below the configured floor."
+        ),
+    )
 
     # ── Path helpers ───────────────────────────────────────────────────────────
     def get_results_path(self) -> Path:
@@ -206,7 +218,7 @@ class BacktestSettings(BaseSettings):
 
     def get_instrument_spec(self, symbol: str) -> dict:
         """
-        Returns tick_size and multiplier for a symbol.
+        Returns tick_size, multiplier, and margin ratio for a symbol.
 
         Falls back to generic defaults if the symbol is unknown, allowing
         the engine to run on unlisted instruments without crashing.
@@ -215,9 +227,11 @@ class BacktestSettings(BaseSettings):
             symbol: Futures symbol string (e.g. 'ES').
 
         Returns:
-            Dict with 'tick_size' and 'multiplier' keys.
+            Dict with 'tick_size', 'multiplier', and 'margin_ratio' keys.
         """
-        return self.instrument_specs.get(symbol, {"tick_size": 0.01, "multiplier": 1.0})
+        spec = dict(self.instrument_specs.get(symbol, {"tick_size": 0.01, "multiplier": 1.0}))
+        spec.setdefault("margin_ratio", float(self.portfolio_margin_ratio))
+        return spec
 
 
 class TerminalUISettings(BaseModel):

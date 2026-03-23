@@ -25,6 +25,7 @@ from .metrics import (
     calc_total_return,
     calc_years,
     calc_dsr,
+    calc_return_stats,
 )
 from .trades import calc_trade_stats
 from .report import get_full_report_str as _build_report
@@ -87,6 +88,7 @@ class PerformanceMetrics:
         max_dd:       float = calc_max_drawdown(equity)
         calmar:       float = calc_calmar(cagr, max_dd)
         dsr:          float = calc_dsr(returns, sharpe, trials=trials, trials_sharpe=trials_sharpe)
+        t_stat, p_val = calc_return_stats(returns)
 
         metrics: Dict[str, float] = {
             "Total Return":  total_return,
@@ -97,6 +99,8 @@ class PerformanceMetrics:
             "Sortino Ratio": sortino,
             "Max Drawdown":  max_dd,
             "Calmar Ratio":  calmar,
+            "T-Statistic":   t_stat,
+            "P-Value":       p_val,
         }
 
         if trades:
