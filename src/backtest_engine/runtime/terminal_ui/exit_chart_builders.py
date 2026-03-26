@@ -354,12 +354,13 @@ def build_exit_holding_time_payload(
         "categories": labels,
         "series": [
             {
-                "name": "Avg PnL",
+                "name": "Avg PnL per Trade",
                 "values": avg_pnl_values,
                 "itemColors": item_colors,
                 "yAxisIndex": 0,
             }
         ],
+        "hideLegend": True,
     }
 
 
@@ -414,6 +415,10 @@ def build_exit_vol_regime_payload(
         else settings.vol_max_pct_default
     )
 
+    # Ensure bins are strictly monotonic for pd.cut
+    v_min = max(0.00001, min(v_min, 0.99998))
+    v_max = max(v_min + 0.00001, min(v_max, 0.99999))
+
     bucket_labels = ["Compression", "Normal", "Panic"]
     try:
         subset["vol_bucket"] = pd.cut(
@@ -422,12 +427,12 @@ def build_exit_vol_regime_payload(
             labels=bucket_labels,
             include_lowest=True,
         )
-    except Exception:
+    except Exception as e:
         return {
             "title": TITLE_EXIT_VOL_REGIME,
             "categories": [],
             "series": [],
-            "emptyReason": "Invalid volatility distribution (bucket construction failed).",
+            "emptyReason": f"Invalid volatility distribution (bucket construction failed: {e}).",
         }
 
     grouped = (
@@ -442,12 +447,13 @@ def build_exit_vol_regime_payload(
         "categories": bucket_labels,
         "series": [
             {
-                "name": "Avg PnL",
+                "name": "Avg PnL per Trade",
                 "values": avg_pnl_values,
                 "itemColors": item_colors,
                 "yAxisIndex": 0,
             }
         ],
+        "hideLegend": True,
         "emptyReason": "",
     }
 
@@ -505,6 +511,7 @@ def build_exit_reason_payload(
                 "yAxisIndex": 0,
             }
         ],
+        "hideLegend": True,
         "emptyReason": "",
     }
 

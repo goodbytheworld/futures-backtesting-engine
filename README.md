@@ -11,8 +11,6 @@ The codebase is optimized for research workflows where no-lookahead execution, a
 
 ## Screenshots
 
-Add real image links after you capture them. Keep the images reasonably wide and focused on one workflow each.
-
 ### Terminal UI Overview
 
 <img width="1593" height="734" alt="image" src="https://github.com/user-attachments/assets/a1a4cc0b-1a42-43bb-837f-b039d2e12b3f" />
