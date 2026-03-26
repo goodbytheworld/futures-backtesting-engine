@@ -95,9 +95,15 @@ def compute_pnl_dist_stats(
             "var_99": float("nan"), "mean": float("nan"), "std": float("nan"),
         }
 
-    clean: pd.Series = daily_pnl.dropna()
-    skew_val: float  = float(stats.skew(clean))
-    kurt_val: float  = float(stats.kurtosis(clean))  # excess (Fisher)
+    clean: pd.Series = daily_pnl.replace([float("inf"), float("-inf")], float("nan")).dropna()
+    
+    # SciPy throws RuntimeWarning if length < 3 or variance is 0
+    if len(clean) > 2 and float(clean.std()) > 0:
+        skew_val: float  = float(stats.skew(clean))
+        kurt_val: float  = float(stats.kurtosis(clean))  # excess (Fisher)
+    else:
+        skew_val: float  = float("nan")
+        kurt_val: float  = float("nan")
 
     var_95_threshold = float(clean.quantile(1 - var_confidence))
     var_99_threshold = float(clean.quantile(1 - tail_confidence))
