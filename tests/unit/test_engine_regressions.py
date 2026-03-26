@@ -369,8 +369,8 @@ def test_portfolio_results_can_write_to_namespaced_scenario_directory(
     assert marker == "portfolio"
 
 
-def test_exit_analytics_excludes_entry_bar_path() -> None:
-    """MFE/MAE should start after entry so the pre-position entry bar is excluded."""
+def test_exit_analytics_includes_entry_bar_in_mfe_mae() -> None:
+    """MFE/MAE include the entry bar: position is live from entry open onward."""
     idx = pd.to_datetime(
         [
             "2024-01-01 09:30:00",
@@ -403,7 +403,8 @@ def test_exit_analytics_excludes_entry_bar_path() -> None:
 
     enriched = enrich_trades_with_exit_analytics(trades, {(0, "TEST"): market})
 
-    assert float(enriched.loc[0, "mfe"]) == 3.0
+    # Entry bar high 150 vs entry 100 → +50 MFE; window lows down to 98 → -2 MAE
+    assert float(enriched.loc[0, "mfe"]) == 50.0
     assert float(enriched.loc[0, "mae"]) == -2.0
 
 
