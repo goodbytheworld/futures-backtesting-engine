@@ -24,25 +24,34 @@ from src.backtest_engine.runtime.terminal_ui.service import TerminalRuntimeConte
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 
+def _todo_body_matches_simulation_backlog(body: str) -> bool:
+    """True when a roadmap open item should appear under Stress Testing → Simulation Backlog."""
+    lower = body.lower()
+    return (
+        "simulation" in lower
+        or "stress testing" in lower
+        or "monte carlo" in lower
+        or "margin-call" in lower
+    )
+
+
 def _read_simulation_backlog(todo_path: Path) -> list[str]:
-    """Reads the reserved simulation backlog section from TODO.md."""
+    """Reads simulation-oriented open items from TODO.md for the Stress Testing tab.
+
+    Uses lightweight keyword matching so TODO.md stays a single checklist with no
+    duplicate sections or inline tags.
+    """
     if not todo_path.exists():
         return []
 
-    lines = todo_path.read_text(encoding="utf-8").splitlines()
-    collecting = False
     items: list[str] = []
-    for line in lines:
+    for line in todo_path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
-        if stripped == "## Simulation Analysis Backlog":
-            collecting = True
+        if not stripped.startswith("- [ ] "):
             continue
-        if collecting and stripped.startswith("## "):
-            break
-        if collecting and stripped.startswith("- [ ] "):
-            items.append(stripped[6:].strip())
-        elif collecting and stripped.startswith("- "):
-            items.append(stripped[2:].strip())
+        body = stripped[6:].strip()
+        if _todo_body_matches_simulation_backlog(body):
+            items.append(body)
     return items
 
 
