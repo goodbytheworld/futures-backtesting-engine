@@ -76,6 +76,30 @@ def test_fold_win_rate_drift_and_expected_value_helpers() -> None:
     assert round(fold.oos_expected_value, 4) == 0.44
 
 
+def test_failed_fold_disables_wr_drift_and_ev_helpers() -> None:
+    """
+    Failed IS folds should not contribute misleading WR drift or EV signals.
+    """
+    fold = FoldResult(
+        fold_id=1,
+        train_start="2024-01-01",
+        train_end="2024-03-01",
+        test_start="2024-03-02",
+        test_end="2024-04-01",
+        best_params={},
+        is_score=0.0,
+        oos_score=0.0,
+        n_trials=1,
+        trial_std=0.0,
+        is_stats={"win_rate": 0.43},
+        oos_stats={"win_rate": 0.46, "avg_win": 2.0, "avg_loss": -1.0},
+    )
+
+    assert fold.is_failed is True
+    assert fold.win_rate_degradation == 0.0
+    assert fold.oos_expected_value == 0.0
+
+
 def test_objective_score_returns_hard_rejection_for_too_few_trades() -> None:
     """
     A trade-starved run should return an explicit hard rejection score.
@@ -216,6 +240,50 @@ def test_wfv_skips_oos_evaluation_when_is_optimization_fails(monkeypatch) -> Non
 
     assert report.fold_results
     assert report.fold_results[0].is_score == -1.0
+    assert report.fold_results[0].oos_score == -1.0
+
+
+def test_wfv_skips_oos_evaluation_when_is_score_is_zero(monkeypatch) -> None:
+    """
+    Zero IS score should be treated as failed quality and skip OOS evaluation.
+    """
+    settings = BacktestSettings(wfo_n_folds=1, wfo_test_size_pct=0.2, wfo_n_trials=1)
+    wfo = WalkForwardOptimizer(settings=settings)
+    data = pd.DataFrame(
+        {"close": range(30)},
+        index=pd.date_range("2024-01-01", periods=30, freq="D"),
+    )
+
+    monkeypatch.setattr(wfo.data_lake, "load", lambda symbol, timeframe: data)
+    monkeypatch.setattr(
+        wfo.base_optimizer,
+        "optimize_on_slice",
+        lambda **kwargs: {
+            "best_params": {"x": 1},
+            "best_score": 0.0,
+            "n_trials": 1,
+            "trial_std": 0.0,
+            "best_stats": {"win_rate": 0.5},
+        },
+    )
+
+    def _must_not_be_called(**kwargs):
+        raise AssertionError("evaluate_on_slice must not be called for zero IS score")
+
+    monkeypatch.setattr(wfo.base_optimizer, "evaluate_on_slice", _must_not_be_called)
+
+    class _Strategy:
+        @staticmethod
+        def get_search_space():
+            return {}
+
+    report = wfo.run(
+        strategy_class=_Strategy,
+        verbose=False,
+        print_report=False,
+        show_progress_bar=False,
+    )
+
     assert report.fold_results[0].oos_score == -1.0
 
 
