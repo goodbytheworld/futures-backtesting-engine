@@ -86,7 +86,8 @@ python run.py --portfolio-backtest --portfolio-config src/backtest_engine/portfo
 # Lightweight batch backtests with one combined Matplotlib popup
 python run.py batch --strategies sma zscore --symbol ES NQ --tf 1h 30m
 
-# Lightweight WFO batch sweep with verdict heatmap and candidate exports
+# Lightweight batch backtests with one combined Matplotlib popup
+# Batch summary MDD% is drawdown depth (non-negative). Plot filtering uses settings.batch_plot_max_drawdown_pct (default 80).
 python run.py wfo-batch --strategies sma zscore --symbol ES --tf 1h
 
 # Launch terminal UI for the latest artifacts
