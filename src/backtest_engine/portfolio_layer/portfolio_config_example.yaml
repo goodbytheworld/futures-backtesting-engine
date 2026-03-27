@@ -28,8 +28,8 @@
 # eod_close_time, trading hours) live in settings.py - no duplication here.
 
 portfolio:
-  rebalance_frequency: intrabar        # intrabar | daily | weekly
-  benchmark_symbol: ES                 # Buy-and-hold benchmark shown in dashboard (null to disable)
+  rebalance_frequency: daily           # intrabar | daily | weekly
+  benchmark_symbol: NQ                 # Buy-and-hold benchmark shown in dashboard (null to disable)
 
   # Vol-targeting
   target_portfolio_vol: 0.25           # Annualised portfolio vol target (25%)
@@ -38,47 +38,23 @@ portfolio:
   max_contracts_per_slot: null         # Optional hard cap on contracts per (slot, symbol)
 
 strategies:
-  - strategy: stat_level
+  - strategy: three_bar_mr # <-- This strategy is really good! Need to check optimization.
     symbols:
       - GC
-    weight: 0.20
-    duty_cycle: 0.0296                    
-    timeframe: 30m
+    weight: 0.50
+    duty_cycle: 1.0               
+    timeframe: 5m
     params: {}
     
   #duty_call, to find out correclty on first test, set to 1.0!
   #then, when you get exact data(see manual below), update it.
 
-  - strategy: sma
+  - strategy: three_bar_mr
     symbols:
-      - YM
-    weight: 0.20
-    duty_cycle: 0.0183                  
-    timeframe: 30m
-    params: {}
-
-  - strategy: sma
-    symbols:
-      - RTY
-    weight: 0.20
-    duty_cycle: 0.013
-    timeframe: 30m
-    params: {}
-
-  - strategy: sma_pullback
-    symbols:
-      - GC
-    weight: 0.20
-    duty_cycle: 0.0441
-    timeframe: 30m
-    params: {}
-
-  - strategy: ict_ob
-    symbols:
-      - SI
-    weight: 0.20
-    duty_cycle: 0.0096
-    timeframe: 30m
+      - NQ
+    weight: 0.50
+    duty_cycle: 1.0               
+    timeframe: 1h
     params: {}
 
 # HOW TO FIND THE RIGHT DUTY CYCLE:

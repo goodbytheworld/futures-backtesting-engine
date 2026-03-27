@@ -13,49 +13,27 @@ from typing import Any, Dict, List
 # Keys are the short names (IDs) used in CLI and YAML configs.
 # Values are dictionaries with metadata.
 STRATEGIES = {
-    "sma": {
-        "class_path": "src.strategies.sma_crossover:SmaCrossoverStrategy",
-        "name": "SmaCrossoverStrategy",
-        "description": "Trend Following",
-    },
-    "mean_rev": {
-        "class_path": "src.strategies.mean_reversion:MeanReversionStrategy",
-        "name": "MeanReversionStrategy",
-        "description": "Mean Reversion",
-    },
     "ict_ob": {
         "class_path": "src.strategies.ict_order_block:IctOrderBlockStrategy",
         "name": "IctOrderBlockStrategy",
         "description": "Popular Media / ICT",
-    },
-    "zscore": {
-        "class_path": "src.strategies.zscore_reversal:ZScoreReversalStrategy",
-        "name": "ZScoreReversalStrategy",
-        "description": "Mean Reversion",
     },
     "sma_pullback": {
         "class_path": "src.strategies.sma_pullback:SmaPullbackStrategy",
         "name": "SmaPullbackStrategy",
         "description": "Trend Following",
     },
-    "intraday_momentum": {
-        "class_path": "src.strategies.intraday_momentum:IntradayMomentumStrategy",
-        "name": "IntradayMomentumStrategy",
-        "description": "Momentum",
-    },
-    "stat_level": {
-        "class_path": "src.strategies.statistical_level:StatisticalLevelStrategy",
-        "name": "StatisticalLevelStrategy",
-        "description": "Statistical Edge",
+    "three_bar_mr": {
+        "class_path": (
+            "src.strategies.mean_reversion_three_bar:ThreeBarMeanReversionStrategy"
+        ),
+        "name": "ThreeBarMeanReversionStrategy",
+        "description": "Mean Reversion",
     },
 }
 
 STRATEGY_ALIASES = {
-    "sma_crossover": "sma",
-    "mean_reversion": "mean_rev",
-    "zscore_reversal": "zscore",
     "ict_order_block": "ict_ob",
-    "statistical_level": "stat_level",
 }
 
 
@@ -90,6 +68,7 @@ def get_strategy_ids(include_aliases: bool = False) -> List[str]:
         strategy_ids.extend(sorted(STRATEGY_ALIASES.keys()))
     return strategy_ids
 
+
 def get_strategy_metadata(strategy_id: str) -> Dict[str, str]:
     """
     Returns metadata for a given strategy ID or alias.
@@ -102,12 +81,13 @@ def get_strategy_metadata(strategy_id: str) -> Dict[str, str]:
     """
     return STRATEGIES.get(resolve_strategy_id(strategy_id), {})
 
+
 def load_strategy_by_id(strategy_id: str) -> Any:
     """
     Returns the strategy class for the given short name.
 
     Args:
-        strategy_id: Strategy identifier ('sma', 'mean_rev', 'ict_ob', etc.).
+        strategy_id: Strategy identifier ('ict_ob', 'sma_pullback', 'three_bar_mr', ...).
 
     Returns:
         Strategy class (subclass of BaseStrategy).
@@ -125,15 +105,16 @@ def load_strategy_by_id(strategy_id: str) -> Any:
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
 
+
 def get_strategy_class_by_name(class_name: str) -> Any:
     """
-    Finds and loads a strategy by its class name (e.g. 'SmaCrossoverStrategy').
+    Finds and loads a strategy by its class name (e.g. 'SmaPullbackStrategy').
     Useful for portfolio YAML configs that still use the class name.
     """
     for strategy_id, metadata in STRATEGIES.items():
         if metadata["name"] == class_name:
             return load_strategy_by_id(strategy_id)
-            
+
     # If not found by name, try to load by ID directly as a fallback
     try:
         return load_strategy_by_id(class_name)

@@ -77,6 +77,8 @@ Do not reintroduce legacy dashboard assumptions into docs or code.
 
 ## Strategy Contract
 
+Canonical strategy IDs and aliases live in `src/strategies/registry.py`; only strategies registered there are exposed to the CLI and portfolio YAML loaders.
+
 Strategies still follow a legacy contract:
 
 ```python

@@ -7,7 +7,7 @@ QUICK START
 
   1. Install deps      pip install -r requirements.txt
   2. Download data     python run.py --download ES NQ YM RTY CL GC YM SI
-  3. Run a backtest    python run.py --backtest --strategy sma --symbol ES --tf 1h
+  3. Run a backtest    python run.py --backtest --strategy sma_pullback --symbol ES --tf 1h
   4. Open dashboard    python run.py --dashboard
                        (or add --dashboard to any --backtest / --portfolio-backtest call)
 
@@ -15,15 +15,10 @@ QUICK START
 AVAILABLE STRATEGIES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  ID                  Alias               Description
-  ──────────────────  ──────────────────  ──────────────────────
-  sma                 sma_crossover       Trend Following (SMA crossover)
-  zscore              zscore_reversal     Mean Reversion  (Z-score)
-  mean_rev            mean_reversion      Mean Reversion  (Bollinger)
-  sma_pullback        —                   Trend Following (SMA pullback)
-  intraday_momentum   —                   Momentum (opening range)
-  stat_level          statistical_level   Statistical Support / Resistance
-  ict_ob              ict_order_block     ICT Order Block
+  ID            Alias           Description
+  ────────────  ──────────────  ─────────────────────────
+  sma_pullback  —               Trend Following (SMA pullback)
+  ict_ob        ict_order_block ICT Order Block
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 KNOWN SYMBOLS  (pre-loaded in instrument_specs; others use generic fallback)
@@ -43,23 +38,23 @@ MODES
   python run.py --download 6E
 
   ── Single backtest ───────────────────────────────────────────────────────
-  python run.py --backtest --strategy stat_level --symbol ES --tf 1h --dashboard
-  python run.py --backtest --strategy zscore --symbol NQ --tf 30m --dashboard
+  python run.py --backtest --strategy ict_ob --symbol YM --tf 30m --dashboard
+  python run.py --backtest --strategy ict_ob --symbol NQ --tf 30m --dashboard
 
   ── Walk-Forward Optimization (single) ────────────────────────────────────
-  python run.py --wfo --strategy stat_level --symbol ES --tf 1h
+  python run.py --wfo --strategy sma_pullback --symbol SI --tf 5m
 
   ── Portfolio backtest ────────────────────────────────────────────────────
   python run.py --portfolio-backtest --dashboard
   python run.py --portfolio-backtest --portfolio-config path/to/config.yaml
 
   ── Batch: one strategy, many symbols / timeframes ────────────────────────
-  python run.py batch --strategies sma mean_rev ict_ob zscore sma_pullback intraday_momentum stat_level --symbol CL NG ES GC NQ RTY SI YM --tf 1h
-  python run.py batch --strategies sma zscore --symbol ES --tf 1h 30m
+  python run.py batch --strategies three_bar_mr --symbol ES NQ RTY YM CL GC SI NG --tf 5m 30m 1h
+  python run.py batch --strategies sma_pullback ict_ob --symbol ES --tf 1h 30m
 
   ── WFO-Batch: full walk-forward sweep across scenarios ───────────────────
-  python run.py wfo-batch --strategies sma zscore mean_rev sma_pullback intraday_momentum stat_level ict_ob --symbol ES --tf 1h
-  python run.py wfo-batch --strategies sma --symbol ES NQ CL GC YM RTY --tf 1h
+  python run.py wfo-batch --strategies sma_pullback ict_ob --symbol ES --tf 1h
+  python run.py wfo-batch --strategies sma_pullback --symbol ES NQ CL GC YM RTY --tf 1h
 
   ── Terminal dashboard (standalone) ───────────────────────────────────────
   python run.py --dashboard
@@ -350,7 +345,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--strategy",
         type=str,
-        default="sma",
+        default="sma_pullback",
         help=f"Strategy name ({strategy_list})",
     )
     parser.add_argument(

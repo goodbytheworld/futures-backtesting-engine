@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from src.backtest_engine.engine import BacktestEngine
 from src.backtest_engine.settings import BacktestSettings
-from src.strategies.sma_crossover import SmaCrossoverStrategy
+from src.strategies.sma_pullback import SmaPullbackStrategy
 
 @pytest.fixture
 def mock_data():
@@ -27,7 +27,7 @@ def test_engine_runs_strategy_successfully(mock_data):
     settings.initial_capital = 100000.0
     
     engine = BacktestEngine(data=mock_data, settings=settings)
-    engine.run(SmaCrossoverStrategy)
+    engine.run(SmaPullbackStrategy)
     
     assert engine.portfolio is not None
     assert engine.portfolio.total_value > 0

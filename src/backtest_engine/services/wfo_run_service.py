@@ -17,7 +17,7 @@ def run_wfo_backtest(strategy_name: str, settings: Any) -> None:
     Runs Walk-Forward Validation for the given strategy.
 
     Args:
-        strategy_name: Short strategy name (e.g. 'sma').
+        strategy_name: Short strategy name (e.g. 'sma_pullback').
         settings: BacktestSettings instance.
     """
     strategy_class = load_strategy_and_validate_cache(strategy_name, settings)

@@ -101,14 +101,14 @@ class IctOrderBlockConfig:
     vol_max_pct         : Upper percentile bound (panic market gate).
     """
     # ── OB detection ───────────────────────────────────────────────────────────
-    ob_impulse_atr_mult: float = 0.8   # Impulse body must be >= this * ATR
-    ob_max_age_bars: int = 50          # Discard untested OB after N bars
+    ob_impulse_atr_mult: float = 0.75   # Impulse body must be >= this * ATR
+    ob_max_age_bars: int = 48           # Discard untested OB after N bars
 
     # ── Risk management ────────────────────────────────────────────────────────
     atr_window: int = 14
     atr_tp_mult: float = 3.0           # Primary TP target in ATR
     min_rr_ratio: float = 3.0          # Fallback minimum RR if ATR TP is tiny
-    sl_offset_ticks: int = 0           # Extra ticks outside the OB for the SL
+    sl_offset_ticks: int = 2           # Extra ticks outside the OB for the SL
 
     # ── Direction ──────────────────────────────────────────────────────────────
     trade_direction: str = "both"      # "both" | "long" | "short"

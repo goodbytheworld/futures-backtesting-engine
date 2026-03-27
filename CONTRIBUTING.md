@@ -30,19 +30,19 @@ If you need scenario queueing from the terminal UI, install Redis separately.
 
 ```bash
 # single backtest
-python run.py --backtest --strategy sma --symbol ES --tf 1h
+python run.py --backtest --strategy sma_pullback --symbol ES --tf 1h
 
 # walk-forward optimization
-python run.py --wfo --strategy zscore --symbol ES --tf 1h
+python run.py --wfo --strategy ict_ob --symbol ES --tf 1h
 
 # portfolio backtest
 python run.py --portfolio-backtest
 
 # lightweight batch backtests
-python run.py batch --strategies sma zscore --symbol ES NQ --tf 1h 30m
+python run.py batch --strategies sma_pullback ict_ob --symbol ES NQ --tf 1h 30m
 
 # lightweight WFO batch sweep
-python run.py wfo-batch --strategies sma zscore --symbol ES --tf 1h
+python run.py wfo-batch --strategies sma_pullback ict_ob --symbol ES --tf 1h
 
 # terminal UI
 python run.py --dashboard

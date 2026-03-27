@@ -106,7 +106,7 @@ def test_run_portfolio_backtest_loads_duty_cycle_and_weight_expansion(
                 "  vol_lookback_bars: 15",
                 "  max_weight_expansion: 9.0",
                 "strategies:",
-                "  - strategy: sma",
+                "  - strategy: sma_pullback",
                 "    symbols: [ES]",
                 "    weight: 1.0",
                 "    duty_cycle: 0.25",

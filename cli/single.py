@@ -19,7 +19,7 @@ def run(strategy_name: str, settings: Any) -> None:
     Runs a single-asset backtest.
 
     Args:
-        strategy_name: Short strategy name (e.g. 'sma').
+        strategy_name: Short strategy name (e.g. 'sma_pullback').
         settings: BacktestSettings instance.
     """
     run_single_backtest(strategy_name, settings)

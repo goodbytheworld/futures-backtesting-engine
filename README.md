@@ -74,20 +74,21 @@ Python `3.11+` is recommended.
 python run.py --download ES NQ YM RTY CL GC SI
 
 # Single backtest
-python run.py --backtest --strategy sma --symbol ES --tf 1h
+python run.py --backtest --strategy sma_pullback --symbol ES --tf 1h
 
 # Walk-forward optimization
-python run.py --wfo --strategy zscore --symbol ES --tf 1h
+python run.py --wfo --strategy ict_ob --symbol ES --tf 1h
 
 # Portfolio backtest
 python run.py --portfolio-backtest
 python run.py --portfolio-backtest --portfolio-config src/backtest_engine/portfolio_layer/portfolio_config_example.yaml
 
 # Lightweight batch backtests with one combined Matplotlib popup
-python run.py batch --strategies sma zscore --symbol ES NQ --tf 1h 30m
+# Batch summary MDD% is drawdown depth (non-negative). Plot filtering uses settings.batch_plot_max_drawdown_pct (default 80).
+python run.py batch --strategies sma_pullback ict_ob --symbol ES NQ --tf 1h 30m
 
 # Lightweight WFO batch sweep with verdict heatmap and candidate exports
-python run.py wfo-batch --strategies sma zscore --symbol ES --tf 1h
+python run.py wfo-batch --strategies sma_pullback ict_ob --symbol ES --tf 1h
 
 # Launch terminal UI for the latest artifacts
 python run.py --dashboard
@@ -191,12 +192,8 @@ Strategies are exposed through `src/strategies/registry.py`.
 
 Current canonical IDs:
 
-- `sma`
-- `mean_rev`
-- `zscore`
-- `sma_pullback`
-- `intraday_momentum`
-- `stat_level`
 - `ict_ob`
+- `sma_pullback`
+- `three_bar_mr` (three-bar mean reversion)
 
-Aliases such as `sma_crossover` and `mean_reversion` are also accepted by the CLI.
+The alias `ict_order_block` maps to `ict_ob` and is also accepted by the CLI.
