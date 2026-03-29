@@ -7,8 +7,10 @@ QUICK START
 
   1. Install deps      pip install -r requirements.txt
   2. Download data     python run.py --download ES NQ YM RTY CL GC YM SI
-  3. Run a backtest    python run.py --backtest --strategy sma_pullback --symbol ES --tf 1h
-  4. Open dashboard    python run.py --dashboard
+  3. Validate cache    python run.py --validate-data
+                       python run.py --validate-data YM --tf 5m
+  4. Run a backtest    python run.py --backtest --strategy sma_pullback --symbol ES --tf 1h
+  5. Open dashboard    python run.py --dashboard
                        (or add --dashboard to any --backtest / --portfolio-backtest call)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -19,6 +21,7 @@ AVAILABLE STRATEGIES
   ────────────  ──────────────  ─────────────────────────
   sma_pullback  —               Trend Following (SMA pullback)
   ict_ob        ict_order_block ICT Order Block
+  and others...
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 KNOWN SYMBOLS  (pre-loaded in instrument_specs; others use generic fallback)
@@ -35,21 +38,24 @@ MODES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   ── Data download ─────────────────────────────────────────────────────────
-  python run.py --download 6E
+  python run.py --download ES NQ YM RTY CL NG GC SI 6E
+  python run.py --validate-data
+  python run.py --validate-data YM
+  python run.py --validate-data YM --tf 5m
 
   ── Single backtest ───────────────────────────────────────────────────────
   python run.py --backtest --strategy ict_daily_fvg --symbol NQ --tf 30m --dashboard
-  python run.py --backtest --strategy ict_ob --symbol NQ --tf 30m --dashboard
+  python run.py --backtest --strategy rfp_fractal --symbol NQ --tf 1h --dashboard
 
   ── Walk-Forward Optimization (single) ────────────────────────────────────
-  python run.py --wfo --strategy sma_pullback --symbol SI --tf 5m
+  python run.py --wfo --strategy three_bar_mr --symbol GC --tf 5m
 
   ── Portfolio backtest ────────────────────────────────────────────────────
   python run.py --portfolio-backtest --dashboard
   python run.py --portfolio-backtest --portfolio-config path/to/config.yaml
 
   ── Batch: one strategy, many symbols / timeframes ────────────────────────
-  python run.py batch --strategies ict_daily_fvg --symbol ES NQ RTY YM CL GC SI NG --tf 30m
+  python run.py batch --strategies three_bar_mr --symbol ES NQ GC SI 6E --tf 5m 30m 1h
   python run.py batch --strategies sma_pullback ict_ob --symbol ES --tf 1h 30m
 
   ── WFO-Batch: full walk-forward sweep across scenarios ───────────────────
@@ -93,6 +99,40 @@ _TERMINAL_DASHBOARD_PORT = "8000"
 _HEALTH_HEADER = "X-Quant-Terminal"
 _HEALTH_HEADER_VALUE = "1"
 _LIGHTWEIGHT_BATCH_COMMANDS = {"batch", "wfo-batch"}
+_CLI_EPILOG = """
+Quick start:
+  1. Install deps:      pip install -r requirements.txt
+  2. Download data:     python run.py --download ES NQ YM RTY CL NG GC SI 6E
+  3. Validate cache:    python run.py --validate-data
+                        python run.py --validate-data YM --tf 5m
+  4. Run a backtest:    python run.py --backtest --strategy sma_pullback --symbol ES --tf 1h
+  5. Open dashboard:    python run.py --dashboard
+
+Modes:
+  Data download:
+    python run.py --download ES NQ YM RTY CL NG GC SI 6E
+  Data quality validation:
+    python run.py --validate-data
+    python run.py --validate-data YM
+    python run.py --validate-data YM --tf 5m
+  Single backtest:
+    python run.py --backtest --strategy ict_daily_fvg --symbol NQ --tf 30m --dashboard
+    python run.py --backtest --strategy rfp_fractal --symbol NQ --tf 1h --dashboard
+  Walk-Forward Optimization:
+    python run.py --wfo --strategy three_bar_mr --symbol GC --tf 5m
+  Portfolio backtest:
+    python run.py --portfolio-backtest --dashboard
+    python run.py --portfolio-backtest --portfolio-config path/to/config.yaml
+  Batch:
+    python run.py batch --strategies three_bar_mr --symbol ES NQ GC SI 6E --tf 5m 30m 1h
+    python run.py batch --strategies sma_pullback ict_ob --symbol ES --tf 1h 30m
+  WFO batch:
+    python run.py wfo-batch --strategies sma_pullback ict_ob --symbol ES --tf 1h
+    python run.py wfo-batch --strategies sma_pullback --symbol ES NQ CL GC YM RTY --tf 1h
+  Terminal dashboard:
+    python run.py --dashboard
+    python run.py --dashboard --dashboard-port 8080
+"""
 
 
 def _resolve_preferred_dashboard_port(cli_port: int | None) -> int:
@@ -326,6 +366,56 @@ def _apply_single_mode_overrides(
     return settings.model_copy(update=updates) if updates else settings
 
 
+def _run_data_validation(
+    *,
+    settings: "BacktestSettings",
+    symbols: Sequence[str],
+    timeframes: Sequence[str] | None,
+) -> None:
+    """
+    Validates cached OHLCV datasets and prints a summary report.
+
+    Args:
+        settings: Shared runtime settings with cache-path configuration.
+        symbols: Optional symbol filters parsed from the CLI.
+        timeframes: Optional timeframe filters parsed from the CLI.
+    """
+    from src.data import DataValidator
+
+    validator = DataValidator()
+    cache_dir = settings.get_cache_path()
+    requested_symbols = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
+    requested_timeframes = list(timeframes or [])
+
+    print("=" * 60)
+    if requested_symbols:
+        print(f"  Validating cached data for: {requested_symbols}")
+    else:
+        print(f"  Validating all cached data in: {cache_dir}")
+    if requested_timeframes:
+        print(f"  Timeframes: {requested_timeframes}")
+    print("=" * 60)
+
+    results = []
+    if requested_symbols:
+        for symbol in requested_symbols:
+            results.extend(
+                validator.validate_cache_directory(
+                    cache_dir=cache_dir,
+                    symbol=symbol,
+                    timeframes=requested_timeframes,
+                )
+            )
+    else:
+        results = validator.validate_cache_directory(
+            cache_dir=cache_dir,
+            symbol=None,
+            timeframes=requested_timeframes,
+        )
+
+    print(validator.generate_report(results))
+
+
 if __name__ == "__main__":
     if _dispatch_lightweight_batch_command(sys.argv[1:]):
         sys.exit(0)
@@ -337,9 +427,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Backtesting Engine",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
+        epilog=_CLI_EPILOG,
     )
     parser.add_argument("--download", nargs="+", help="Download data for symbols via IB")
+    parser.add_argument(
+        "--validate-data",
+        nargs="*",
+        metavar="SYMBOL",
+        help=(
+            "Validate cached OHLCV data quality. "
+            "Without SYMBOL validates the full cache; "
+            "with SYMBOL validates only that instrument."
+        ),
+    )
     parser.add_argument("--backtest", action="store_true", help="Run single-asset backtest")
     parser.add_argument("--wfo", action="store_true", help="Run Walk-Forward Optimization")
     parser.add_argument(
@@ -425,6 +525,13 @@ if __name__ == "__main__":
         for sym in args.download:
             fetcher.fetch_all_timeframes(sym)
         print("Download complete.")
+
+    if args.validate_data is not None:
+        _run_data_validation(
+            settings=settings,
+            symbols=args.validate_data,
+            timeframes=args.timeframes,
+        )
 
     if args.backtest:
         from cli.single import run as run_backtest

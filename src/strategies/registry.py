@@ -30,10 +30,18 @@ STRATEGIES = {
         "name": "ThreeBarMeanReversionStrategy",
         "description": "Mean Reversion",
     },
+    "rfp_fractal": {
+        "class_path": (
+            "src.strategies.rolling_fractal_pivot:RollingFractalPivotStrategy"
+        ),
+        "name": "RollingFractalPivotStrategy",
+        "description": "Fractal pivot / IBS reclaim",
+    },
 }
 
 STRATEGY_ALIASES = {
     "ict_order_block": "ict_ob",
+    "rolling_fractal_pivot": "rfp_fractal",
 }
 
 

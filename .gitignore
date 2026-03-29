@@ -48,3 +48,7 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 *.parquet
+
+# Private repo: track data lake / cache under data/ (override rules above)
+!data/**/*.parquet
+!data/**/*.db
