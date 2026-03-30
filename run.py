@@ -1,518 +1,57 @@
-"""
-Backtesting Engine — entry point.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-QUICK START
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  1. Install deps      pip install -r requirements.txt
-  2. Download data     python run.py --download ES NQ YM RTY CL GC YM SI
-  3. Validate cache    python run.py --validate-data
-                       python run.py --validate-data YM --tf 5m
-  4. Run a backtest    python run.py --backtest --strategy sma_pullback --symbol ES --tf 1h
-  5. Open dashboard    python run.py --dashboard
-                       (or add --dashboard to any --backtest / --portfolio-backtest call)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-AVAILABLE STRATEGIES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  ID            Alias           Description
-  ────────────  ──────────────  ─────────────────────────
-  sma_pullback  —               Trend Following (SMA pullback)
-  ict_ob        ict_order_block ICT Order Block
-  and others...
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-KNOWN SYMBOLS  (pre-loaded in instrument_specs; others use generic fallback)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  ES  NQ  YM  RTY   — US equity index futures
-  CL  NG             — energy
-  GC  SI  PL         — metals
-  ZC  ZB             — grains / bonds
-  6E                 — FX (EUR/USD CME)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-MODES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  ── Data download ─────────────────────────────────────────────────────────
-  python run.py --download ES NQ YM RTY CL NG GC SI 6E ZC PL
-  python run.py --validate-data
-  python run.py --validate-data YM
-  python run.py --validate-data YM --tf 5m
-
-  ── Single backtest ───────────────────────────────────────────────────────
-  python run.py --backtest --strategy channel_breakout --symbol GC --tf 30m --dashboard
-
-  ── Walk-Forward Optimization (single) ────────────────────────────────────
-  python run.py --wfo --strategy three_bar_mr --symbol GC --tf 5m
-
-  ── Portfolio backtest ────────────────────────────────────────────────────
-  python run.py --portfolio-backtest --dashboard
-  python run.py --portfolio-backtest --portfolio-config path/to/config.yaml
-
-  ── Batch: one strategy, many symbols / timeframes ────────────────────────
-  python run.py batch --strategies channel_breakout --symbol ES NQ RTY YM CL NG GC SI 6E --tf 30m 1h
-  python run.py batch --strategies sma_pullback ict_ob --symbol ES --tf 1h 30m
-
-  ── WFO-Batch: full walk-forward sweep across scenarios ───────────────────
-  python run.py wfo-batch --strategies sma_pullback ict_ob --symbol ES --tf 1h
-  python run.py wfo-batch --strategies sma_pullback --symbol ES NQ CL GC YM RTY --tf 1h
-
-  ── Terminal dashboard (standalone) ───────────────────────────────────────
-  python run.py --dashboard
-  python run.py --dashboard --dashboard-port 8080
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TIPS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  • Strategy IDs and aliases are interchangeable on the CLI.
-  • --tf accepts the same timeframe labels used in data cache filenames (30m, 1h, 4h, 1D …).
-  • batch / wfo-batch accept multiple --symbol values (space-separated) and multiple --tf values.
-  • --workers N overrides the process-pool size for batch modes (default: settings.batch_max_workers).
-  • Settings can be overridden via environment variables prefixed with QUANT_BACKTEST_
-    or by editing a .env file in the project root.
-"""
+"""Repository CLI entry point."""
 
 from __future__ import annotations
 
-import argparse
-import json
-import os
-from pathlib import Path
-import socket
-import subprocess
 import sys
-from typing import Sequence
-import urllib.error
-import urllib.request
+
+from cli.data_validation import run_data_validation
+from cli.lightweight_batch import dispatch_lightweight_batch_command
+from cli.main_parser import apply_single_mode_overrides, build_main_parser
+from cli.runtime_dashboard import launch_dashboard
 
 
-_PROJECT_ROOT = Path(__file__).parent
-_TERMINAL_DASHBOARD_APP = "src.backtest_engine.runtime.terminal_ui.app:app"
-_TERMINAL_DASHBOARD_HOST = "127.0.0.1"
-_TERMINAL_DASHBOARD_PORT = "8000"
-_HEALTH_HEADER = "X-Quant-Terminal"
-_HEALTH_HEADER_VALUE = "1"
-_LIGHTWEIGHT_BATCH_COMMANDS = {"batch", "wfo-batch"}
-_CLI_EPILOG = """
-Quick start:
-  1. Install deps:      pip install -r requirements.txt
-  2. Download data:     python run.py --download ES NQ YM RTY CL NG GC SI 6E
-  3. Validate cache:    python run.py --validate-data
-                        python run.py --validate-data YM --tf 5m
-  4. Run a backtest:    python run.py --backtest --strategy sma_pullback --symbol ES --tf 1h
-  5. Open dashboard:    python run.py --dashboard
-
-Modes:
-  Data download:
-    python run.py --download ES NQ YM RTY CL NG GC SI 6E
-  Data quality validation:
-    python run.py --validate-data
-    python run.py --validate-data YM
-    python run.py --validate-data YM --tf 5m
-  Single backtest:
-    python run.py --backtest --strategy ict_daily_fvg --symbol NQ --tf 30m --dashboard
-    python run.py --backtest --strategy rfp_fractal --symbol NQ --tf 1h --dashboard
-  Walk-Forward Optimization:
-    python run.py --wfo --strategy three_bar_mr --symbol GC --tf 5m
-  Portfolio backtest:
-    python run.py --portfolio-backtest --dashboard
-    python run.py --portfolio-backtest --portfolio-config path/to/config.yaml
-  Batch:
-    python run.py batch --strategies three_bar_mr --symbol ES NQ GC SI 6E --tf 5m 30m 1h
-    python run.py batch --strategies sma_pullback ict_ob --symbol ES --tf 1h 30m
-  WFO batch:
-    python run.py wfo-batch --strategies sma_pullback ict_ob --symbol ES --tf 1h
-    python run.py wfo-batch --strategies sma_pullback --symbol ES NQ CL GC YM RTY --tf 1h
-  Terminal dashboard:
-    python run.py --dashboard
-    python run.py --dashboard --dashboard-port 8080
-"""
-
-
-def _resolve_preferred_dashboard_port(cli_port: int | None) -> int:
-    """Resolves the preferred dashboard HTTP port."""
-    if cli_port is not None:
-        return cli_port
-    raw = os.environ.get("TERMINAL_DASHBOARD_PORT", _TERMINAL_DASHBOARD_PORT)
-    try:
-        return int(raw)
-    except ValueError:
-        return int(_TERMINAL_DASHBOARD_PORT)
-
-
-def _dashboard_already_running(host: str, port: int) -> bool:
-    """True when this project's terminal dashboard is already listening."""
-    url = f"http://{host}:{port}/health"
-    try:
-        req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=1.0) as resp:
-            if resp.headers.get(_HEALTH_HEADER) != _HEALTH_HEADER_VALUE:
-                return False
-            body = json.loads(resp.read().decode())
-            return body.get("status") == "ok"
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-        return False
-
-
-def _first_free_tcp_port(host: str, start: int, *, span: int = 32) -> int:
-    """Returns the first free TCP port in a small Windows-safe range."""
-    last_error: OSError | None = None
-    for port in range(start, start + span):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            try:
-                sock.bind((host, port))
-            except OSError as exc:
-                last_error = exc
-                continue
-            return port
-    hint = f": {last_error}" if last_error else ""
-    raise RuntimeError(
-        f"No free TCP port found for terminal dashboard on {host} "
-        f"(tried {start}..{start + span - 1}){hint}"
-    )
-
-
-def _launch_dashboard(*, dashboard_port: int | None = None) -> None:
+def main(argv: list[str] | None = None) -> int:
     """
-    Launches the FastAPI terminal dashboard as a child process.
+    Runs the repository CLI.
 
     Methodology:
-        The dashboard remains a separate uvicorn process.  The launcher avoids
-        spawning duplicates and falls back to the next free port when needed.
-    """
-    host = _TERMINAL_DASHBOARD_HOST
-    preferred = _resolve_preferred_dashboard_port(dashboard_port)
-
-    if _dashboard_already_running(host, preferred):
-        print(
-            f"\n[Dashboard] Terminal UI already running - open "
-            f"http://{host}:{preferred} (not starting a second server).\n"
-        )
-        return
-
-    port = _first_free_tcp_port(host, preferred)
-    if port != preferred:
-        print(
-            f"\n[Dashboard] Port {preferred} is in use; "
-            f"binding terminal dashboard on {port} instead.\n"
-        )
-
-    print("\n[Dashboard] Launching terminal dashboard...")
-    print(f"[Dashboard] URL: http://{host}:{port}\n")
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            _TERMINAL_DASHBOARD_APP,
-            "--host",
-            host,
-            "--port",
-            str(port),
-        ],
-        cwd=str(_PROJECT_ROOT),
-        check=False,
-    )
-
-
-def _build_lightweight_batch_parser(command_name: str) -> argparse.ArgumentParser:
-    """
-    Builds the dedicated parser for the new positional batch commands.
+        ``run.py`` stays intentionally thin. Argument construction, dashboard
+        runtime helpers, lightweight batch parsing, and validation routines all
+        live in adjacent modules so the entry point remains a small orchestration
+        shell instead of another monolith.
 
     Args:
-        command_name: Either ``batch`` or ``wfo-batch``.
+        argv: Optional CLI args excluding the executable name.
 
     Returns:
-        Configured parser for that command.
+        Process exit code.
     """
-    parser = argparse.ArgumentParser(
-        prog=f"python run.py {command_name}",
-        description=(
-            "Lightweight multi-scenario batch backtester."
-            if command_name == "batch"
-            else "Lightweight multi-scenario WFO batch runner."
-        ),
-    )
-    strategy_group = parser.add_mutually_exclusive_group(required=True)
-    strategy_group.add_argument("--strategy", type=str, help="One strategy ID or alias")
-    strategy_group.add_argument(
-        "--strategies",
-        nargs="+",
-        help="One or many strategy IDs or aliases",
-    )
-    symbol_group = parser.add_mutually_exclusive_group(required=True)
-    symbol_group.add_argument(
-        "--symbol",
-        dest="symbols",
-        nargs="+",
-        help="One or many futures symbols",
-    )
-    symbol_group.add_argument(
-        "--symbols",
-        dest="symbols",
-        nargs="+",
-        help="One or many futures symbols",
-    )
-    parser.add_argument(
-        "--tf",
-        nargs="+",
-        required=True,
-        metavar="TIMEFRAME",
-        help="One or many timeframes (for example: 1h 30m 5m 1m)",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=None,
-        help="Optional worker override for the batch process pool",
-    )
-    return parser
-
-
-def _dispatch_lightweight_batch_command(argv: Sequence[str]) -> bool:
-    """
-    Dispatches the new lightweight batch commands before the legacy parser.
-
-    Args:
-        argv: Raw CLI arguments excluding the executable name.
-
-    Returns:
-        True when a lightweight command was handled.
-    """
-    if not argv:
-        return False
-
-    command_name = str(argv[0]).strip().lower()
-    if command_name not in _LIGHTWEIGHT_BATCH_COMMANDS:
-        return False
-
-    parser = _build_lightweight_batch_parser(command_name)
-    args = parser.parse_args(list(argv[1:]))
-
-    from src.backtest_engine.settings import BacktestSettings
-
-    settings = BacktestSettings()
-    strategy_names = [args.strategy] if args.strategy else list(args.strategies or [])
-
-    if command_name == "batch":
-        from cli.batch import run as run_batch
-
-        run_batch(
-            strategy_names=strategy_names,
-            symbols=args.symbols,
-            timeframes=args.tf,
-            settings=settings,
-            max_workers=args.workers,
-        )
-    else:
-        from cli.wfo_batch import run as run_wfo_batch
-
-        run_wfo_batch(
-            strategy_names=strategy_names,
-            symbols=args.symbols,
-            timeframes=args.tf,
-            settings=settings,
-            max_workers=args.workers,
-        )
-
-    return True
-
-
-def _apply_single_mode_overrides(
-    parser: argparse.ArgumentParser,
-    args: argparse.Namespace,
-    settings: "BacktestSettings",
-) -> "BacktestSettings":
-    """
-    Applies legacy single-mode symbol/timeframe CLI overrides.
-
-    Args:
-        parser: Active argparse parser for validation failures.
-        args: Parsed CLI namespace.
-        settings: Base settings loaded from environment.
-
-    Returns:
-        Possibly updated settings instance.
-    """
-    updates: dict[str, object] = {}
-    flag_symbol = str(args.symbol_override).strip() if args.symbol_override else ""
-    positional_symbol = (
-        str(args.symbol_positional).strip() if args.symbol_positional else ""
-    )
-
-    if flag_symbol and positional_symbol and flag_symbol.upper() != positional_symbol.upper():
-        parser.error("Use either '--symbol ES' or positional 'ES', not both.")
-
-    resolved_symbol = flag_symbol or positional_symbol
-    if resolved_symbol:
-        updates["default_symbol"] = resolved_symbol.upper()
-
-    timeframes = list(args.timeframes or [])
-    if timeframes:
-        if len(timeframes) != 1:
-            parser.error(
-                "--tf accepts exactly one value for --backtest and --wfo. "
-                "Use 'batch' or 'wfo-batch' for multi-timeframe sweeps."
-            )
-        updates["low_interval"] = str(timeframes[0]).strip()
-
-    return settings.model_copy(update=updates) if updates else settings
-
-
-def _run_data_validation(
-    *,
-    settings: "BacktestSettings",
-    symbols: Sequence[str],
-    timeframes: Sequence[str] | None,
-) -> None:
-    """
-    Validates cached OHLCV datasets and prints a summary report.
-
-    Args:
-        settings: Shared runtime settings with cache-path configuration.
-        symbols: Optional symbol filters parsed from the CLI.
-        timeframes: Optional timeframe filters parsed from the CLI.
-    """
-    from src.data import DataValidator
-
-    validator = DataValidator()
-    cache_dir = settings.get_cache_path()
-    requested_symbols = [str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()]
-    requested_timeframes = list(timeframes or [])
-
-    print("=" * 60)
-    if requested_symbols:
-        print(f"  Validating cached data for: {requested_symbols}")
-    else:
-        print(f"  Validating all cached data in: {cache_dir}")
-    if requested_timeframes:
-        print(f"  Timeframes: {requested_timeframes}")
-    print("=" * 60)
-
-    results = []
-    if requested_symbols:
-        for symbol in requested_symbols:
-            results.extend(
-                validator.validate_cache_directory(
-                    cache_dir=cache_dir,
-                    symbol=symbol,
-                    timeframes=requested_timeframes,
-                )
-            )
-    else:
-        results = validator.validate_cache_directory(
-            cache_dir=cache_dir,
-            symbol=None,
-            timeframes=requested_timeframes,
-        )
-
-    print(validator.generate_report(results))
-
-
-if __name__ == "__main__":
-    if _dispatch_lightweight_batch_command(sys.argv[1:]):
-        sys.exit(0)
+    cli_args = list(sys.argv[1:] if argv is None else argv)
+    if dispatch_lightweight_batch_command(cli_args):
+        return 0
 
     from src.strategies.registry import get_strategy_ids
 
     strategy_list = ", ".join(get_strategy_ids(include_aliases=True))
+    parser = build_main_parser(strategy_list)
+    args = parser.parse_args(cli_args)
 
-    parser = argparse.ArgumentParser(
-        description="Backtesting Engine",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_CLI_EPILOG,
-    )
-    parser.add_argument("--download", nargs="+", help="Download data for symbols via IB")
-    parser.add_argument(
-        "--validate-data",
-        nargs="*",
-        metavar="SYMBOL",
-        help=(
-            "Validate cached OHLCV data quality. "
-            "Without SYMBOL validates the full cache; "
-            "with SYMBOL validates only that instrument."
-        ),
-    )
-    parser.add_argument("--backtest", action="store_true", help="Run single-asset backtest")
-    parser.add_argument("--wfo", action="store_true", help="Run Walk-Forward Optimization")
-    parser.add_argument(
-        "--strategy",
-        type=str,
-        default="sma_pullback",
-        help=f"Strategy name ({strategy_list})",
-    )
-    parser.add_argument(
-        "--symbol",
-        dest="symbol_override",
-        type=str,
-        default=None,
-        help="Override default symbol for --backtest or --wfo",
-    )
-    parser.add_argument(
-        "--tf",
-        dest="timeframes",
-        nargs="+",
-        default=None,
-        metavar="TIMEFRAME",
-        help="Override timeframe for --backtest or --wfo",
-    )
-    parser.add_argument(
-        "--portfolio-backtest",
-        action="store_true",
-        help="Run multi-strategy portfolio backtest",
-    )
-    parser.add_argument(
-        "--portfolio-config",
-        type=str,
-        default="src/backtest_engine/portfolio_layer/portfolio_config_example.yaml",
-        help="Path to YAML portfolio config",
-    )
-    parser.add_argument(
-        "--dashboard",
-        action="store_true",
-        help=(
-            "Launch terminal dashboard. "
-            "When combined with --backtest/--portfolio-backtest, "
-            "opens AFTER the backtest completes. "
-            "Standalone: 'python run.py --dashboard'."
-        ),
-    )
-    parser.add_argument(
-        "--dashboard-port",
-        type=int,
-        default=None,
-        metavar="PORT",
-        help=(
-            "HTTP port for the terminal dashboard (default: 8000 or "
-            "TERMINAL_DASHBOARD_PORT). If the port is busy, the next free port is used."
-        ),
-    )
-    parser.add_argument("--results-subdir", type=str, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--scenario-id", type=str, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--baseline-run-id", type=str, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--scenario-type", type=str, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--scenario-params-json", type=str, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("symbol_positional", nargs="?", default=None, help=argparse.SUPPRESS)
-    args = parser.parse_args()
-
-    if len(sys.argv) == 1:
+    if not cli_args:
         parser.print_help()
-        sys.exit(1)
+        return 1
 
-    if args.dashboard and not args.backtest and not args.portfolio_backtest and not args.wfo:
-        _launch_dashboard(dashboard_port=args.dashboard_port)
-        sys.exit(0)
+    if (
+        args.dashboard
+        and not args.backtest
+        and not args.portfolio_backtest
+        and not args.wfo
+    ):
+        launch_dashboard(dashboard_port=args.dashboard_port)
+        return 0
 
     from src.backtest_engine.settings import BacktestSettings
 
-    settings = BacktestSettings()
-    settings = _apply_single_mode_overrides(parser, args, settings)
+    settings = apply_single_mode_overrides(parser, args, BacktestSettings())
 
     if args.download:
         from src.data import IBFetcher
@@ -521,12 +60,12 @@ if __name__ == "__main__":
         print(f"  Downloading data: {args.download}")
         print("=" * 60)
         fetcher = IBFetcher(settings=settings)
-        for sym in args.download:
-            fetcher.fetch_all_timeframes(sym)
+        for symbol in args.download:
+            fetcher.fetch_all_timeframes(symbol)
         print("Download complete.")
 
     if args.validate_data is not None:
-        _run_data_validation(
+        run_data_validation(
             settings=settings,
             symbols=args.validate_data,
             timeframes=args.timeframes,
@@ -537,14 +76,14 @@ if __name__ == "__main__":
 
         run_backtest(args.strategy, settings)
         if args.dashboard:
-            _launch_dashboard(dashboard_port=args.dashboard_port)
+            launch_dashboard(dashboard_port=args.dashboard_port)
 
     if args.wfo:
         from cli.wfo import run as run_wfo
 
         run_wfo(args.strategy, settings)
 
-    if getattr(args, "portfolio_backtest", False):
+    if args.portfolio_backtest:
         from cli.portfolio import run as run_portfolio
 
         run_portfolio(
@@ -556,4 +95,10 @@ if __name__ == "__main__":
             scenario_params_json=args.scenario_params_json,
         )
         if args.dashboard:
-            _launch_dashboard(dashboard_port=args.dashboard_port)
+            launch_dashboard(dashboard_port=args.dashboard_port)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

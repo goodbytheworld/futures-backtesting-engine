@@ -181,6 +181,7 @@ sudo apt install redis-server
 - [Architecture](docs/ARCHITECTURE.md) - layer boundaries, engine roles, artifact flow.
 - [Module Map](docs/MODULE_MAP.md) - quick reference for portfolio layer and entry points.
 - [Agent Context](docs/agents.md) - compact project context for LLMs and automation agents.
+- [Usage Guide](USAGE.md) - CLI examples, common workflows, and dashboard launch commands.
 - [Contributing Guide](CONTRIBUTING.md) - setup, workflow, tests, strategy additions, PR expectations.
 - [Analytics README](src/backtest_engine/analytics/README.md)
 - [Optimization README](src/backtest_engine/optimization/README.md)

@@ -1,155 +1,145 @@
 """
-Optuna Optimizer Module — Event-Driven Adaptation.
-
-Runs BacktestEngine per trial for full fidelity scoring.
-Uses per-symbol cost model integrated via engine settings.
+Optuna-based optimization for event-driven strategies.
 """
 
-import os
-import sys
-import optuna
+from __future__ import annotations
+
+import math
+from typing import Any, Dict, Optional, Type
+
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, Optional, Type
 
 from ..engine import BacktestEngine
 from ..settings import BacktestSettings
-from .validation import Validator, ValidationException
 from .objective import objective_score
-
-
-# ── Utilities ──────────────────────────────────────────────────────────────────
-
-class _HiddenPrints:
-    """Suppresses stdout during optimisation iterations."""
-
-    def __enter__(self):
-        self._orig = sys.stdout
-        sys.stdout = open(os.devnull, "w")
-
-    def __exit__(self, *_):
-        sys.stdout.close()
-        sys.stdout = self._orig
+from .optuna_runtime import (
+    HiddenPrints,
+    Trial,
+    require_optuna,
+    restore_optuna_info_verbosity,
+    set_optuna_warning_verbosity,
+)
+from .validation import ValidationException, Validator
 
 
 class OptunaOptimizer:
     """
-    Bayesian Optimization Engine for Event-Driven Strategies.
+    Runs Optuna search against full BacktestEngine evaluations.
 
-    Uses Optuna TPE sampler to find optimal strategy parameters
-    by running BacktestEngine per trial on in-sample data,
-    then validates on out-of-sample.
-    Enforces strict engineering rules via Validator.
+    Methodology:
+        Each trial copies ``BacktestSettings``, injects candidate parameters,
+        executes the real event-driven engine, and scores the resulting metrics
+        with the shared optimization objective.
     """
 
-    # Thresholds are read from settings.wfo_prune_* — no magic numbers here.
-
-    def __init__(
-        self,
-        settings: Optional[BacktestSettings] = None,
-    ) -> None:
-        """
-        Initialize optimizer with settings.
-
-        Args:
-            settings: Optional settings override; defaults to singleton.
-        """
+    def __init__(self, settings: Optional[BacktestSettings] = None) -> None:
+        """Initializes the optimizer with explicit runtime settings."""
         if settings is None:
-            raise ValueError("BacktestSettings must be provided to OptunaOptimizer via Dependency Injection.")
+            raise ValueError(
+                "BacktestSettings must be provided to OptunaOptimizer via Dependency Injection."
+            )
         self.settings = settings
 
-    # ── Search space application ───────────────────────────────────────────────
+    def _validate_search_space(
+        self,
+        strategy_class: Type,
+        search_space: Dict[str, Any],
+    ) -> Optional[str]:
+        """Validates the strategy search space before any trial allocation."""
+        if not search_space:
+            return (
+                f"{strategy_class.__name__}.get_search_space() returned empty dict. "
+                "Nothing to optimize."
+            )
+
+        try:
+            Validator.validate_params(
+                {key: None for key in search_space},
+                strategy_class.__name__,
+                self.settings.wfo_max_parameters,
+            )
+        except ValidationException as exc:
+            return str(exc)
+        return None
+
+    def scale_min_trades_for_window(
+        self,
+        target_bars: int,
+        reference_bars: int,
+        base_min_trades: Optional[int] = None,
+    ) -> int:
+        """Scales a trade floor in proportion to relative sample length."""
+        base_threshold = (
+            int(base_min_trades)
+            if base_min_trades is not None
+            else int(self.settings.wfo_prune_min_trades)
+        )
+        if target_bars <= 0 or reference_bars <= 0:
+            return max(1, base_threshold)
+        scaled = base_threshold * (float(target_bars) / float(reference_bars))
+        return max(1, int(math.ceil(scaled)))
 
     def _apply_params(
-        self, trial: optuna.Trial, search_space: Dict[str, Any]
+        self,
+        trial: Trial,
+        search_space: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Samples parameter values from the Optuna trial using the strategy's
-        get_search_space() bounds.
-
-        Supports three bound formats:
-            - (start, stop, step): int or float range with step.
-            - (start, stop): continuous range without step.
-            - [v1, v2, ...]: categorical choice.
-
-        Returns:
-            Dict of sampled parameter names → values.
-        """
-        params = {}
+        """Samples concrete parameter values from the search-space definition."""
+        params: Dict[str, Any] = {}
         for param, bounds in search_space.items():
             if isinstance(bounds, list):
-                val = trial.suggest_categorical(param, bounds)
+                value = trial.suggest_categorical(param, bounds)
             elif isinstance(bounds, tuple):
                 if len(bounds) == 3:
                     start, stop, step = bounds
                     if all(isinstance(v, int) for v in (start, stop, step)):
-                        val = trial.suggest_int(param, start, stop, step=step)
+                        value = trial.suggest_int(param, start, stop, step=step)
                     else:
-                        val = trial.suggest_float(
-                            param, float(start), float(stop), step=float(step)
+                        value = trial.suggest_float(
+                            param,
+                            float(start),
+                            float(stop),
+                            step=float(step),
                         )
                 elif len(bounds) == 2:
                     start, stop = bounds
                     if isinstance(start, int) and isinstance(stop, int):
-                        val = trial.suggest_int(param, start, stop)
+                        value = trial.suggest_int(param, start, stop)
                     else:
-                        val = trial.suggest_float(
-                            param, float(start), float(stop)
-                        )
+                        value = trial.suggest_float(param, float(start), float(stop))
                 else:
                     raise ValueError(
                         f"[OPT] Invalid bounds for param '{param}': {bounds}"
                     )
             else:
                 continue
-            params[param] = val
+            params[param] = value
         return params
-
-    # ── Run a single strategy backtest ─────────────────────────────────────────
 
     def _run_strategy(
         self,
         strategy_class: Type,
         params: Dict[str, Any],
-        start_date=None,
-        end_date=None,
+        start_date: object = None,
+        end_date: object = None,
         data: Optional[pd.DataFrame] = None,
-        step_callback=None,
+        step_callback: Any = None,
     ) -> Dict[str, Any]:
-        """
-        Execute a single strategy backtest for optimisation scoring.
-
-        Creates a BacktestSettings copy with injected params, runs the
-        full BacktestEngine, and extracts metrics.
-
-        Args:
-            strategy_class: Strategy class inheriting BaseStrategy.
-            params: Parameter dict to inject into settings via setattr.
-            start_date: Optional IS start bound.
-            end_date: Optional IS end bound.
-
-        Returns:
-            Dict with 'stats' sub-dict and 'engine' reference.
-        """
-        # Isolate parameters per trial by copying the settings singleton
-        s = self.settings.model_copy(update=params)
-
+        """Executes a single strategy run and normalizes the resulting metrics."""
+        strategy_settings = self.settings.model_copy(update=params)
         engine = BacktestEngine(
             start_date=start_date,
             end_date=end_date,
-            settings=s,
+            settings=strategy_settings,
             data=data,
         )
 
-        with _HiddenPrints():
+        with HiddenPrints():
             engine.run(strategy_class, step_callback=step_callback)
 
-        # Extract metrics
         history = engine.portfolio.get_history_df()
-        metrics = engine.analytics.calculate_metrics(
-            history, engine.execution.trades
-        )
-
+        metrics = engine.analytics.calculate_metrics(history, engine.execution.trades)
         if not metrics:
             return {
                 "stats": {
@@ -165,62 +155,38 @@ class OptunaOptimizer:
                 "engine": engine,
             }
 
-        raw_max_dd = metrics.get("Max Drawdown", 0.0)
-        # Normalize metric keys to match objective.py expectations.
-        # Some metric providers emit drawdown as a fraction (-0.25), others as
-        # percent (-25.0). Keep a single percent representation for objective.
-        max_dd_pct = raw_max_dd * 100 if abs(raw_max_dd) <= 1.0 else raw_max_dd
-
-        # Normalize metric keys to match objective.py expectations
+        raw_max_drawdown = metrics.get("Max Drawdown", 0.0)
+        max_drawdown_pct = (
+            raw_max_drawdown * 100 if abs(raw_max_drawdown) <= 1.0 else raw_max_drawdown
+        )
         stats = {
             "total_trades": metrics.get("Total Trades", 0),
             "sharpe_ratio": metrics.get("Sharpe Ratio", 0.0),
             "sortino_ratio": metrics.get("Sortino Ratio", 0.0),
             "calmar_ratio": metrics.get("Calmar Ratio", 0.0),
-            "max_drawdown": max_dd_pct,
+            "max_drawdown": max_drawdown_pct,
             "win_rate": metrics.get("Win Rate", 0.0),
             "avg_win": metrics.get("Avg Win", 0.0),
             "avg_loss": metrics.get("Avg Loss", 0.0),
         }
-
         return {"stats": stats, "engine": engine}
-
-    # ── Full Optimise flow ─────────────────────────────────────────────────────
 
     def optimize(
         self,
         strategy_class: Type,
         n_trials: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        Run optimisation for a specific strategy class.
-
-        Args:
-            strategy_class: Any class implementing BaseStrategy + get_search_space().
-            n_trials: Number of Optuna trials.
-
-        Returns:
-            Dict of best parameter values.
-        """
+        """Runs full optimization for a strategy class."""
+        optuna = require_optuna()
         n_trials = n_trials or self.settings.wfo_n_trials
-        
+
         search_space = strategy_class.get_search_space()
-        if not search_space:
-            print(
-                f"[OPT] Warning: {strategy_class.__name__}.get_search_space() "
-                f"returned empty dict. Nothing to optimise."
-            )
+        validation_error = self._validate_search_space(strategy_class, search_space)
+        if validation_error is not None:
+            print(f"[OPT] Validation failed: {validation_error}")
             return {}
 
-        # Pre-flight validation of parameter count & names
-        try:
-            Validator.validate_params(
-                {k: None for k in search_space}, strategy_class.__name__, self.settings.wfo_max_parameters
-            )
-        except ValidationException as e:
-            print(f"[OPT] Validation failed: {e}")
-            return {}
-
+        set_optuna_warning_verbosity()
         study = optuna.create_study(
             direction="maximize",
             sampler=optuna.samplers.TPESampler(seed=42),
@@ -230,157 +196,144 @@ class OptunaOptimizer:
 
         print(f"\n[OPT] Optimizing {strategy_class.__name__} for {n_trials} trials...")
 
-        def objective(trial):
-            
-            def prune_callback(engine_ref, c_date, step, total):
-                # Report status to Optuna ~10 times per backtest run
+        def objective(trial: Trial) -> float:
+            def prune_callback(
+                engine_ref: Any,
+                _current_date: object,
+                step: int,
+                total: int,
+            ) -> None:
                 check_interval = max(total // 10, 1)
                 if step % check_interval == 0:
-                    # Provide an intermediate value (e.g., current PnL or total total_value)
-                    current_value = engine_ref.portfolio.total_value
-                    trial.report(current_value, step)
+                    trial.report(engine_ref.portfolio.total_value, step)
                     if trial.should_prune():
                         raise optuna.TrialPruned("Pruned by Optuna intermediate check")
 
             params = self._apply_params(trial, search_space)
-            result = self._run_strategy(
-                strategy_class, 
+            stats = self._run_strategy(
+                strategy_class,
                 params,
-                step_callback=prune_callback
-            )
-            stats = result["stats"]
+                step_callback=prune_callback,
+            )["stats"]
 
             min_trades = self.settings.wfo_prune_min_trades
             max_dd_pct = self.settings.wfo_prune_max_dd_pct
-
             if stats["total_trades"] < min_trades:
                 raise optuna.TrialPruned("Insufficient trades")
-
             if abs(stats["max_drawdown"]) > max_dd_pct:
                 raise optuna.TrialPruned("Excessive Drawdown")
-
-            return objective_score(
-                stats,
-                min_trades=min_trades,
-                target_trades=min_trades * self.settings.wfo_prune_target_trades_mult,  # see settings.py
-            )
-
-        optuna.logging.set_verbosity(optuna.logging.WARNING)
-        study.optimize(objective, n_trials=n_trials)
-        optuna.logging.set_verbosity(optuna.logging.INFO)
-
-        print(f"\n{'=' * 60}")
-        print(f"OPTIMIZATION RESULTS: {strategy_class.__name__}")
-        print(f"{'=' * 60}")
-
-        if not study.best_trials:
-            print("[OPT] No trials completed successfully.")
-            return {}
-
-        print(f"Best Score:  {study.best_trial.value:.4f}")
-        print(f"Best Params: {study.best_params}")
-        print(f"{'=' * 60}\n")
-
-        return study.best_params
-
-    # ═══════════════════════════════════════════════════════════════════
-    # WFV INTERFACE: Methods for external fold management
-    # ═══════════════════════════════════════════════════════════════════
-
-    def optimize_on_slice(
-        self,
-        strategy_class: Type,
-        start_date=None,
-        end_date=None,
-        data: Optional[pd.DataFrame] = None,
-        n_trials: Optional[int] = None,
-        fold_id: int = 0,
-        show_progress_bar: bool = True,
-    ) -> Dict[str, Any]:
-        """
-        Run optimisation on a date-bounded slice (for WFV usage).
-
-        Args:
-            strategy_class: Strategy class to optimize.
-            start_date: IS start date (optional).
-            end_date: IS end date (optional).
-            data: Pre-sliced dataframe for Dependency Injection mapping.
-            n_trials: Number of Optuna trials.
-            fold_id: Fold identifier for study naming.
-            show_progress_bar: Whether Optuna should render its own progress bar.
-
-        Returns:
-            Dict with best_params, best_score, n_trials, trial_std.
-        """
-        n_trials = n_trials or self.settings.wfo_n_trials
-        
-        search_space = strategy_class.get_search_space()
-
-        study = optuna.create_study(
-            study_name=f"wfv_{strategy_class.__name__}_fold{fold_id}",
-            direction="maximize",
-            sampler=optuna.samplers.TPESampler(seed=42 + fold_id),
-        )
-
-        def objective(trial):
-            params = self._apply_params(trial, search_space)
-
-            # Pre-flight validation
-            try:
-                Validator.validate_params(params, strategy_class.__name__, self.settings.wfo_max_parameters)
-            except ValidationException as e:
-                raise optuna.TrialPruned(str(e))
-
-            def prune_callback(engine_ref, c_date, step, total):
-                check_interval = max(total // 10, 1)
-                if step > 0 and step % check_interval == 0:
-                    current_value = engine_ref.portfolio.total_value
-                    trial.report(current_value, step)
-                    if trial.should_prune():
-                        raise optuna.TrialPruned("Pruned by WFV Optuna check")
-
-            result = self._run_strategy(
-                strategy_class, params,
-                start_date=start_date,
-                end_date=end_date,
-                data=data,
-                step_callback=prune_callback
-            )
-            stats = result["stats"]
-            trial.set_user_attr("stats", stats)
-
-            min_trades = self.settings.wfo_prune_min_trades
-
-            if stats["total_trades"] < min_trades:
-                raise optuna.TrialPruned("Insufficient trades")
-
             return objective_score(
                 stats,
                 min_trades=min_trades,
                 target_trades=min_trades * self.settings.wfo_prune_target_trades_mult,
             )
 
-        # Suppress Optuna logging during WFV
-        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        study.optimize(objective, n_trials=n_trials)
+        restore_optuna_info_verbosity()
+
+        print(f"\n{'=' * 60}")
+        print(f"OPTIMIZATION RESULTS: {strategy_class.__name__}")
+        print(f"{'=' * 60}")
+        if not study.best_trials:
+            print("[OPT] No trials completed successfully.")
+            return {}
+        print(f"Best Score:  {study.best_trial.value:.4f}")
+        print(f"Best Params: {study.best_params}")
+        print(f"{'=' * 60}\n")
+        return study.best_params
+
+    def optimize_on_slice(
+        self,
+        strategy_class: Type,
+        start_date: object = None,
+        end_date: object = None,
+        data: Optional[pd.DataFrame] = None,
+        n_trials: Optional[int] = None,
+        fold_id: int = 0,
+        show_progress_bar: bool = True,
+    ) -> Dict[str, Any]:
+        """Runs optimization on a bounded slice for walk-forward workflows."""
+        optuna = require_optuna()
+        n_trials = n_trials or self.settings.wfo_n_trials
+
+        search_space = strategy_class.get_search_space()
+        validation_error = self._validate_search_space(strategy_class, search_space)
+        if validation_error is not None:
+            return {
+                "best_params": {},
+                "best_score": -1.0,
+                "n_trials": 0,
+                "trial_std": 0.0,
+                "failure_reason": validation_error,
+            }
+
+        set_optuna_warning_verbosity()
+        study = optuna.create_study(
+            study_name=f"wfv_{strategy_class.__name__}_fold{fold_id}",
+            direction="maximize",
+            sampler=optuna.samplers.TPESampler(seed=42 + fold_id),
+        )
+
+        def objective(trial: Trial) -> float:
+            params = self._apply_params(trial, search_space)
+
+            def prune_callback(
+                engine_ref: Any,
+                _current_date: object,
+                step: int,
+                total: int,
+            ) -> None:
+                check_interval = max(total // 10, 1)
+                if step > 0 and step % check_interval == 0:
+                    trial.report(engine_ref.portfolio.total_value, step)
+                    if trial.should_prune():
+                        raise optuna.TrialPruned("Pruned by WFV Optuna check")
+
+            stats = self._run_strategy(
+                strategy_class,
+                params,
+                start_date=start_date,
+                end_date=end_date,
+                data=data,
+                step_callback=prune_callback,
+            )["stats"]
+            trial.set_user_attr("stats", stats)
+
+            min_trades = self.settings.wfo_prune_min_trades
+            max_dd_pct = self.settings.wfo_prune_max_dd_pct
+            if stats["total_trades"] < min_trades:
+                raise optuna.TrialPruned("Insufficient trades")
+            if abs(stats["max_drawdown"]) > max_dd_pct:
+                raise optuna.TrialPruned("Excessive Drawdown")
+            return objective_score(
+                stats,
+                min_trades=min_trades,
+                target_trades=min_trades * self.settings.wfo_prune_target_trades_mult,
+            )
+
         study.optimize(
-            objective, 
+            objective,
             n_trials=n_trials,
             show_progress_bar=show_progress_bar,
         )
-        optuna.logging.set_verbosity(optuna.logging.INFO)
+        restore_optuna_info_verbosity()
 
         if not study.best_trials:
-            return {"best_params": {}, "best_score": -1.0, "n_trials": 0, "trial_std": 0.0}
+            return {
+                "best_params": {},
+                "best_score": -1.0,
+                "n_trials": 0,
+                "trial_std": 0.0,
+                "failure_reason": "No trials completed successfully.",
+            }
 
-        # Capture trial variance for DSR calculation
         trial_values = [
-            t.value
-            for t in study.trials
-            if t.value is not None
-            and t.state == optuna.trial.TrialState.COMPLETE
+            trial.value
+            for trial in study.trials
+            if trial.value is not None
+            and trial.state == optuna.trial.TrialState.COMPLETE
         ]
         trial_std = float(np.std(trial_values)) if len(trial_values) > 1 else 0.0
-
         return {
             "best_params": study.best_params,
             "best_score": study.best_trial.value,
@@ -393,36 +346,33 @@ class OptunaOptimizer:
         self,
         strategy_class: Type,
         params: Dict[str, Any],
-        start_date=None,
-        end_date=None,
+        start_date: object = None,
+        end_date: object = None,
         data: Optional[pd.DataFrame] = None,
+        min_trades_override: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        Evaluate a strategy with fixed params on a date-bounded OOS slice.
-
-        Args:
-            strategy_class: Strategy class.
-            params: Fixed parameters to inject.
-            start_date: OOS start date.
-            end_date: OOS end date.
-
-        Returns:
-            Dict with stats and score.
-        """
-        result = self._run_strategy(
-            strategy_class, params,
+        """Evaluates fixed parameters on an OOS slice."""
+        stats = self._run_strategy(
+            strategy_class,
+            params,
             start_date=start_date,
             end_date=end_date,
             data=data,
+        )["stats"]
+
+        min_trades = (
+            int(min_trades_override)
+            if min_trades_override is not None
+            else int(self.settings.wfo_prune_min_trades)
         )
-        stats = result["stats"]
-
-        min_trades = self.settings.wfo_prune_min_trades
-
         score = objective_score(
             stats,
             min_trades=min_trades,
             target_trades=min_trades * self.settings.wfo_prune_target_trades_mult,
         )
-
-        return {"stats": stats, "score": score}
+        rejection_reason: Optional[str] = None
+        if stats["total_trades"] < min_trades:
+            rejection_reason = (
+                f"Insufficient OOS trades: {stats['total_trades']} < {min_trades}"
+            )
+        return {"stats": stats, "score": score, "rejection_reason": rejection_reason}

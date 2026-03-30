@@ -144,8 +144,8 @@ class BacktestSettings(BaseSettings):
     wfo_max_parameters: int = 6      # Strict maximum limit for optimized variables
 
     # Pruning / quality gates
-    wfo_prune_min_trades: int = 40         # Minimum trades for a trial to pass
-    wfo_prune_max_dd_pct: float = 25.0    # Max drawdown % before early pruning
+    wfo_prune_min_trades: int = 7         # Minimum trades for a trial to pass
+    wfo_prune_max_dd_pct: float = 35.0    # Max drawdown % before early pruning
     wfo_prune_target_trades_mult: int = 2  # target_trades = min_trades * this
 
     # Robustness / consistency gates
@@ -153,7 +153,7 @@ class BacktestSettings(BaseSettings):
     wfo_warn_min_profitable_folds: int = 2
     wfo_pass_min_consecutive_profitable_folds: int = 2
     wfo_warn_min_consecutive_profitable_folds: int = 1
-    wfo_min_sharpe_per_fold: float = 0.5
+    wfo_min_sharpe_per_fold: float = 0.3
 
     # Lightweight batch orchestration
     batch_max_workers: int = Field(

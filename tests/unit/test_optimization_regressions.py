@@ -415,3 +415,162 @@ def test_wfv_report_applies_per_fold_sharpe_threshold() -> None:
     report.compute()
 
     assert report.verdict == "FAIL"
+
+
+def test_wfv_report_uses_single_profitable_fold_for_candidate_params() -> None:
+    """
+    A lone profitable fold should not mix its params with losing folds.
+    """
+    folds = [
+        FoldResult(
+            fold_id=1,
+            train_start="2024-01-01",
+            train_end="2024-02-01",
+            test_start="2024-02-02",
+            test_end="2024-03-01",
+            best_params={"length": 10, "mode": "fast"},
+            is_score=1.0,
+            oos_score=0.7,
+            n_trials=10,
+            trial_std=0.1,
+            oos_stats={"sharpe_ratio": 1.0},
+        ),
+        FoldResult(
+            fold_id=2,
+            train_start="2024-02-01",
+            train_end="2024-03-01",
+            test_start="2024-03-02",
+            test_end="2024-04-01",
+            best_params={"length": 100, "mode": "slow"},
+            is_score=1.0,
+            oos_score=-1.0,
+            n_trials=10,
+            trial_std=0.1,
+            oos_stats={"sharpe_ratio": -1.0},
+        ),
+    ]
+    report = WFVReport(symbol="ES", strategy_name="S", n_folds=2, fold_results=folds)
+    report.compute()
+
+    assert report.candidate_params == {"length": 10, "mode": "fast"}
+
+
+def test_scale_min_trades_for_window_scales_by_relative_sample_size() -> None:
+    """
+    OOS trade floors should scale with bar-count ratio instead of staying fixed.
+    """
+    optimizer = OptunaOptimizer(settings=BacktestSettings(wfo_prune_min_trades=40))
+
+    assert optimizer.scale_min_trades_for_window(target_bars=20, reference_bars=100) == 8
+
+
+def test_evaluate_on_slice_uses_scaled_trade_floor_override(monkeypatch) -> None:
+    """
+    Shorter OOS windows should be scored against the overridden trade floor.
+    """
+    optimizer = OptunaOptimizer(settings=BacktestSettings(wfo_prune_min_trades=40))
+
+    monkeypatch.setattr(
+        optimizer,
+        "_run_strategy",
+        lambda *args, **kwargs: {
+            "stats": {
+                "total_trades": 15,
+                "sharpe_ratio": 1.0,
+                "sortino_ratio": 1.0,
+                "max_drawdown": -5.0,
+                "win_rate": 0.5,
+                "avg_win": 1.0,
+                "avg_loss": -1.0,
+            }
+        },
+    )
+
+    accepted = optimizer.evaluate_on_slice(
+        strategy_class=object,
+        params={},
+        min_trades_override=10,
+    )
+    rejected = optimizer.evaluate_on_slice(
+        strategy_class=object,
+        params={},
+        min_trades_override=20,
+    )
+
+    assert accepted["score"] >= 0.0
+    assert accepted["rejection_reason"] is None
+    assert rejected["score"] == -1.0
+    assert "Insufficient OOS trades" in str(rejected["rejection_reason"])
+
+
+def test_optimize_on_slice_fails_fast_when_search_space_is_empty() -> None:
+    """
+    WFV should surface empty search spaces before creating trials.
+    """
+
+    class _Strategy:
+        @staticmethod
+        def get_search_space():
+            return {}
+
+    optimizer = OptunaOptimizer(settings=BacktestSettings())
+    result = optimizer.optimize_on_slice(
+        strategy_class=_Strategy,
+        n_trials=1,
+        show_progress_bar=False,
+    )
+
+    assert result["best_score"] == -1.0
+    assert "empty dict" in result["failure_reason"]
+
+
+def test_wfv_scales_oos_trade_floor_before_evaluation(monkeypatch) -> None:
+    """
+    Walk-forward evaluation should pass a bar-length-scaled OOS trade floor.
+    """
+
+    class _Strategy:
+        @staticmethod
+        def get_search_space():
+            return {}
+
+    settings = BacktestSettings(
+        wfo_n_folds=1,
+        wfo_test_size_pct=0.2,
+        wfo_n_trials=1,
+        wfo_prune_min_trades=40,
+    )
+    wfo = WalkForwardOptimizer(settings=settings)
+    data = pd.DataFrame(
+        {"close": range(30)},
+        index=pd.date_range("2024-01-01", periods=30, freq="D"),
+    )
+    seen: dict[str, int] = {}
+
+    monkeypatch.setattr(wfo.data_lake, "load", lambda symbol, timeframe: data)
+    monkeypatch.setattr(
+        wfo.base_optimizer,
+        "optimize_on_slice",
+        lambda **kwargs: {
+            "best_params": {"x": 1},
+            "best_score": 1.0,
+            "n_trials": 1,
+            "trial_std": 0.0,
+            "best_stats": {"win_rate": 0.5},
+        },
+    )
+
+    def _fake_eval(**kwargs):
+        seen["min_trades_override"] = kwargs["min_trades_override"]
+        return {"score": 0.5, "stats": {"sharpe_ratio": 1.0}, "rejection_reason": None}
+
+    monkeypatch.setattr(wfo.base_optimizer, "evaluate_on_slice", _fake_eval)
+
+    wfo.run(
+        strategy_class=_Strategy,
+        verbose=False,
+        print_report=False,
+        show_progress_bar=False,
+    )
+
+    assert seen["min_trades_override"] == 10

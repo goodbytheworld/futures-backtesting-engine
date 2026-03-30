@@ -20,6 +20,8 @@ Read these first:
 2. `docs/ARCHITECTURE.md`
 3. `docs/MODULE_MAP.md`
 
+Read `USAGE.md` only when the task touches CLI help text, command examples, or onboarding docs.
+
 If `dev_context/` exists locally, `dev_context/CLEAN_CODE_MCP.md` is an optional internal reference.
 Do not read unrelated files in `dev_context/` unless the task explicitly requires them.
 
@@ -34,6 +36,7 @@ Do not read unrelated files in `dev_context/` unless the task explicitly require
 ### Layering
 
 - `run.py` parses args
+- `run.py` should stay thin and delegate parser/runtime helpers into `cli/`
 - `cli/` adapts args to services
 - `services/` orchestrates use cases
 - engines execute bar-by-bar logic
@@ -72,6 +75,7 @@ Rules:
 - `routes_*.py` should stay thin
 - builders should return payloads, not perform app-level orchestration
 - templates and static assets are terminal UI specific
+- shared chart/request helpers live in `static/charts_shared.js`
 
 Do not reintroduce legacy dashboard assumptions into docs or code.
 
@@ -91,10 +95,12 @@ Implications:
 - indicators should be precomputed in `__init__`
 - `on_bar()` should stay lightweight
 - portfolio mode uses adapters to support this contract
+- reusable strategy filters now live under `src/strategies/filters/`
 
 ## Where To Put Changes
 
 - new CLI mode or CLI adapter behavior -> `run.py`, `cli/`
+- CLI examples / help text / onboarding commands -> `USAGE.md`, `cli/main_parser.py`
 - reusable workflow logic -> `src/backtest_engine/services/`
 - execution semantics -> engine modules
 - artifacts, metrics, report serialization -> `src/backtest_engine/analytics/`
@@ -117,3 +123,4 @@ Implications:
 - `src/backtest_engine/optimization/README.md`
 - `src/backtest_engine/portfolio_layer/README.md`
 - `tests/README.md`
+- `USAGE.md`

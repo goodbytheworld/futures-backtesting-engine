@@ -29,6 +29,7 @@
         </div>
     </div>
     <script src="{{ url_for('static', path='/terminal.js') }}?v={{ static_asset_version | default('1') }}"></script>
+    <script src="{{ url_for('static', path='/charts_shared.js') }}?v={{ static_asset_version | default('1') }}"></script>
     <script src="{{ url_for('static', path='/charts.js') }}?v={{ static_asset_version | default('1') }}"></script>
     <script src="{{ url_for('static', path='/operations.js') }}?v={{ static_asset_version | default('1') }}"></script>
 </body>

@@ -75,6 +75,7 @@ These modules are the public orchestration boundary between adapters and engines
 | `services/scenario_job_service.py` | dashboard scenario job preparation |
 | `services/scenario_runner_service.py` | scenario rerun execution helpers |
 | `services/paths.py` | results path resolution |
+| `services/worker_manager.py` | compatibility facade for managed worker/redis lifecycle |
 
 ## CLI Adapters
 
@@ -82,6 +83,10 @@ These should stay thin.
 
 | Module | Trigger | Delegates To |
 |---|---|---|
+| `cli/main_parser.py` | `run.py` startup | argparse construction and single-run overrides |
+| `cli/lightweight_batch.py` | `batch`, `wfo-batch` | lightweight positional batch parsing |
+| `cli/runtime_dashboard.py` | `--dashboard` | terminal UI launch helpers |
+| `cli/data_validation.py` | `--validate-data` | cache validation reporting |
 | `cli/single.py` | `--backtest` | `services/single_run_service.py` |
 | `cli/wfo.py` | `--wfo` | `services/wfo_run_service.py` |
 | `cli/portfolio.py` | `--portfolio-backtest` | `services/portfolio_run_service.py` |
@@ -99,6 +104,27 @@ These should stay thin.
 | `runtime/terminal_ui/routes_partials.py` | HTML partial endpoints |
 | `runtime/terminal_ui/routes_charts.py` | chart JSON endpoints |
 | `runtime/terminal_ui/routes_operations.py` | scenario and operational endpoints |
+| `runtime/terminal_ui/exit_charts/` | topic-split exit-analysis chart builders |
+| `runtime/terminal_ui/static/charts_shared.js` | shared chart loading and resize utilities |
+
+## Strategy Filters
+
+| Module | Purpose |
+|---|---|
+| `src/strategies/filters/core.py` | shared indicator/config helpers |
+| `src/strategies/filters/volatility.py` | volatility, shock, and stretch filters |
+| `src/strategies/filters/trend.py` | trend T-stat filter |
+| `src/strategies/filters/stationarity.py` | ADF and half-life filters |
+| `src/strategies/filters/kalman.py` | Kalman beta estimator |
+
+## Optimization
+
+| Module | Purpose |
+|---|---|
+| `optimization/optimizer.py` | Optuna search and slice evaluation |
+| `optimization/wfv_optimizer.py` | fold orchestration |
+| `optimization/wfv_report.py` | fold models and report formatting |
+| `optimization/optuna_runtime.py` | optional Optuna runtime helpers |
 
 ## Contributor Shortcut
 

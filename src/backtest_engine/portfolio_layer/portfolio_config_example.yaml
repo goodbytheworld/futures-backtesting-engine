@@ -42,8 +42,16 @@ strategies:
   - strategy: three_bar_mr
     symbols:
       - YM
-    weight: 0.25
-    duty_cycle: 0.0261         
+    weight: 0.15
+    duty_cycle: 0.0211       
+    timeframe: 1h
+    params: {}
+
+  - strategy: three_bar_mr
+    symbols:
+      - ES
+    weight: 0.15
+    duty_cycle: 0.0246        
     timeframe: 1h
     params: {}
 
@@ -51,23 +59,31 @@ strategies:
     symbols:
       - 6E
     weight: 0.25
-    duty_cycle: 0.0094        
+    duty_cycle: 0.0077      
     timeframe: 1h
     params: {}
 
   - strategy: rfp_fractal
     symbols:
-      - YM
-    weight: 0.25
-    duty_cycle: 0.0081        
+      - NQ
+    weight: 0.15
+    duty_cycle: 0.0047       
+    timeframe: 1h
+    params: {}
+
+  - strategy: rfp_fractal
+    symbols:
+      - ES
+    weight: 0.15
+    duty_cycle: 0.0087       
     timeframe: 1h
     params: {}
 
   - strategy: channel_breakout
     symbols:
-      - GC
-    weight: 0.25
-    duty_cycle: 0.0133        
+      - SI
+    weight: 0.15
+    duty_cycle: 0.0113     
     timeframe: 30m
     params: {}
 
