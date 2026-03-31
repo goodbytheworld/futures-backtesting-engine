@@ -9,7 +9,7 @@ from typing import Optional, Type
 
 from src.data.data_lake import DataLake
 
-from ..settings import BacktestSettings
+from ..config import BacktestSettings
 from .fold_generator import PurgedFoldGenerator
 from .optimizer import OptunaOptimizer
 from .optuna_runtime import require_optuna, set_optuna_warning_verbosity

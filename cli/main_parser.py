@@ -8,7 +8,7 @@ import argparse
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.backtest_engine.settings import BacktestSettings
+    from src.backtest_engine.config import BacktestSettings
 
 
 CLI_EPILOG = """

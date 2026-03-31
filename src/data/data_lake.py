@@ -10,7 +10,7 @@ from typing import Optional, Dict, List, Tuple
 
 import pandas as pd
 
-from ..backtest_engine.settings import BacktestSettings as Settings
+from ..backtest_engine.config import BacktestSettings as Settings
 
 
 class DataLake:

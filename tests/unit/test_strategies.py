@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
+from src.backtest_engine.execution import Order
+from src.strategies.mean_reversion_three_bar import ThreeBarMeanReversionStrategy
 from src.strategies.registry import get_strategy_ids, load_strategy_by_id
 
 
@@ -92,3 +94,63 @@ def test_strategy_contract(strategy_id: str) -> None:
     # 3. Search space contract
     space = strategy_class.get_search_space()
     assert isinstance(space, dict), f"Strategy {strategy_id} get_search_space() must return a dict"
+
+
+def test_three_bar_mr_emits_day_limit_entry_on_signal() -> None:
+    """Three-bar mean reversion must use a DAY limit order for entries."""
+    idx = pd.to_datetime(
+        [
+            "2020-01-01 00:00:00",
+            "2020-01-02 00:00:00",
+            "2020-01-03 00:00:00",
+            "2020-01-04 00:00:00",
+            "2020-01-05 00:00:00",
+            "2020-01-06 00:00:00",
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [80.0, 90.0, 130.0, 120.0, 110.0, 112.0],
+            "high": [81.0, 91.0, 131.0, 121.0, 111.0, 113.0],
+            "low": [79.0, 89.0, 129.0, 119.0, 100.0, 111.0],
+            "close": [80.0, 90.0, 130.0, 120.0, 110.0, 112.0],
+            "volume": [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0],
+        },
+        index=idx,
+    )
+
+    engine = MockEngine()
+    engine.data = data
+    engine.settings.tbar_regime_window = 3
+    engine.settings.tbar_extreme_lookback = 3
+    engine.settings.tbar_trade_direction = "long"
+    engine.settings.tbar_use_shock_filter = False
+    engine.settings.tbar_entry_limit_atr_frac = 0.10
+    engine.portfolio.positions["BTCUSDT"] = 0.0
+    engine.settings.default_symbol = "BTCUSDT"
+
+    renamed_data = data.copy()
+    renamed_data.index = idx
+    engine.data = renamed_data
+    strategy = ThreeBarMeanReversionStrategy(engine=engine)
+
+    bar = pd.Series(
+        {
+            "open": 110.0,
+            "high": 111.0,
+            "low": 100.0,
+            "close": 110.0,
+            "volume": 1000.0,
+        },
+        name=idx[-2],
+    )
+    orders = strategy.on_bar(bar)
+
+    assert len(orders) == 1
+    order = orders[0]
+    assert isinstance(order, Order)
+    assert order.order_type == "LIMIT"
+    assert order.time_in_force == "DAY"
+    assert order.side == "BUY"
+    assert order.limit_price is not None
+    assert order.limit_price < float(bar["close"])

@@ -49,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         launch_dashboard(dashboard_port=args.dashboard_port)
         return 0
 
-    from src.backtest_engine.settings import BacktestSettings
+    from src.backtest_engine.config import BacktestSettings
 
     settings = apply_single_mode_overrides(parser, args, BacktestSettings())
 

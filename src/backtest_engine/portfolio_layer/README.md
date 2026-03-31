@@ -24,12 +24,34 @@ It is responsible for:
 
 ## Important Distinction
 
-This package is not a thin wrapper around `src/backtest_engine/engine.py`.
+This package is not a thin wrapper around the single-asset engine.
 
-- `src/backtest_engine/engine.py` runs one strategy against one primary symbol.
+- `src/backtest_engine/single_asset/engine.py` runs one strategy against one primary symbol.
 - `portfolio_layer/engine/engine.py` runs many strategy slots against a unified timeline with one shared equity pool.
 
 Changes related to allocation, scheduler behavior, portfolio book accounting, slot orchestration, or cross-slot artifacts belong here.
+
+## Execution Model
+
+The portfolio engine is still target-driven:
+
+- strategies emit `StrategySignal`
+- the allocator converts signals into `TargetPosition`
+- the engine computes delta orders against current position plus pending quantity
+- the shared execution kernel handles fill pricing, slippage, commissions, and order-type semantics
+
+Event-loop ordering is behavioral, not cosmetic:
+
+1. fill pending orders
+2. mark to market
+3. evaluate risk limits
+4. collect signals
+5. compute targets
+6. queue delta orders
+7. apply forced EOD handling
+8. snapshot portfolio state
+
+Protective reduce-only stop/target exits are supported for live positions. If one coarse bar can prove both protective paths, the default policy remains pessimistic unless lower-timeframe replay is explicitly enabled and complete.
 
 ## Volatility Targeting & Position Sizing
 

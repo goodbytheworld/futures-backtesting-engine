@@ -6,7 +6,7 @@ import pandas as pd
 
 from src.backtest_engine.portfolio_layer.domain.contracts import PortfolioConfig, StrategySlot
 from src.backtest_engine.portfolio_layer.engine.engine import PortfolioBacktestEngine
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
 from src.strategies.base import BaseStrategy
 
 

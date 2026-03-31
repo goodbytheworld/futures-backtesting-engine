@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pytest
 
-from src.backtest_engine.engine import BacktestEngine
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
+from src.backtest_engine.single_asset import BacktestEngine
 from src.backtest_engine.execution import Order
 from src.strategies.base import BaseStrategy
 

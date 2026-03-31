@@ -16,7 +16,7 @@ import pandas as pd
 from src.backtest_engine.execution import Order
 
 if TYPE_CHECKING:
-    from src.backtest_engine.engine import BacktestEngine
+    from src.backtest_engine.single_asset.engine import BacktestEngine
 
 
 class BaseStrategy(ABC):
@@ -29,9 +29,10 @@ class BaseStrategy(ABC):
         __init__ via vectorised pandas/numpy operations on the full
         dataset. on_bar() simply performs an O(1)
         dictionary lookup against those pre-computed arrays.
-        (Note: Do NOT shift indicators by 1. The engine naturally executes
-        generated orders at the NEXT bar's Open, providing realistic 1-bar 
-        execution lag without lookahead bias).
+        (Note: Do NOT shift indicators by 1. The engine makes generated orders
+        eligible from the NEXT bar. Market orders typically fill at that next
+        bar's open, while resting non-market orders may persist until fill or
+        expiry without introducing lookahead bias.)
 
     Required:
         on_bar() — return a list of Orders (may be empty).
@@ -56,8 +57,8 @@ class BaseStrategy(ABC):
             bar: Current OHLCV bar (pd.Series with index open/high/low/close/volume).
 
         Returns:
-            List of Order objects to queue for execution on the NEXT bar's open.
-            Return an empty list if no new order is required.
+            List of Order objects to queue for execution from the NEXT eligible
+            bar onward. Return an empty list if no new order is required.
         """
         ...
 
@@ -139,4 +140,84 @@ class BaseStrategy(ABC):
             order_type="MARKET",
             reason=reason,
             timestamp=timestamp,
+        )
+
+    def limit_order(
+        self,
+        side: str,
+        quantity: float,
+        limit_price: float,
+        reason: str = "SIGNAL",
+        symbol: Optional[str] = None,
+        timestamp: Optional[Any] = None,
+        time_in_force: str = "DAY",
+        reduce_only: bool = False,
+    ) -> Order:
+        """
+        Convenience factory for LIMIT orders.
+        """
+        return Order(
+            symbol=symbol or self.settings.default_symbol,
+            quantity=abs(quantity),
+            side=side,
+            order_type="LIMIT",
+            reason=reason,
+            timestamp=timestamp,
+            limit_price=float(limit_price),
+            time_in_force=time_in_force,
+            reduce_only=reduce_only,
+        )
+
+    def stop_order(
+        self,
+        side: str,
+        quantity: float,
+        stop_price: float,
+        reason: str = "SIGNAL",
+        symbol: Optional[str] = None,
+        timestamp: Optional[Any] = None,
+        time_in_force: str = "GTC",
+        reduce_only: bool = False,
+    ) -> Order:
+        """
+        Convenience factory for STOP orders.
+        """
+        return Order(
+            symbol=symbol or self.settings.default_symbol,
+            quantity=abs(quantity),
+            side=side,
+            order_type="STOP",
+            reason=reason,
+            timestamp=timestamp,
+            stop_price=float(stop_price),
+            time_in_force=time_in_force,
+            reduce_only=reduce_only,
+        )
+
+    def stop_limit_order(
+        self,
+        side: str,
+        quantity: float,
+        stop_price: float,
+        limit_price: float,
+        reason: str = "SIGNAL",
+        symbol: Optional[str] = None,
+        timestamp: Optional[Any] = None,
+        time_in_force: str = "GTC",
+        reduce_only: bool = False,
+    ) -> Order:
+        """
+        Convenience factory for STOP_LIMIT orders.
+        """
+        return Order(
+            symbol=symbol or self.settings.default_symbol,
+            quantity=abs(quantity),
+            side=side,
+            order_type="STOP_LIMIT",
+            reason=reason,
+            timestamp=timestamp,
+            stop_price=float(stop_price),
+            limit_price=float(limit_price),
+            time_in_force=time_in_force,
+            reduce_only=reduce_only,
         )

@@ -82,8 +82,8 @@ class MarketDataMutation(BaseModel):
     Describes how scenario execution mutates or constrains market inputs.
 
     Methodology:
-        Plan A keeps this contract intentionally small: one regime-oriented
-        volatility hook, one optional price-shift placeholder, and replay-window
+        The contract stays intentionally small: one regime-oriented volatility
+        hook, one optional price-shift placeholder, and replay-window
         selection tracked separately in the top-level scenario spec.
     """
 
@@ -101,8 +101,8 @@ class ExecutionMutation(BaseModel):
 
     Methodology:
         These fields align with the current deterministic execution and spread
-        settings so Plan A can widen the contract before deeper market-model
-        work exists.
+        settings so the contract can widen later without changing the current
+        deterministic execution model.
     """
 
     model_config = ConfigDict(frozen=True)

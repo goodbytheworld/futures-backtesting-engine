@@ -9,7 +9,7 @@ from .pnl import resample_pnl_to_horizon, _HORIZON_RULE
 def _min_corr_samples() -> int:
     """Loads the minimum sample count required for correlation views."""
     try:
-        from src.backtest_engine.settings import BacktestSettings
+        from src.backtest_engine.config import BacktestSettings
 
         return int(BacktestSettings().terminal_ui.terminal_min_correlation_samples)
     except Exception:
@@ -126,4 +126,3 @@ def compute_exposure_correlation(
         return pd.DataFrame(), dropped_cols
 
     return resampled[active_cols].corr(method="pearson"), dropped_cols
-

@@ -25,7 +25,7 @@
 #   by max_contracts_per_slot when that field is not null.
 #
 # Shared settings (commission_rate, spread_ticks, spread_mode, kill-switch thresholds,
-# eod_close_time, trading hours) live in settings.py - no duplication here.
+# eod_close_time, trading hours) live in the backtest-engine config package - no duplication here.
 
 portfolio:
   rebalance_frequency: daily           # intrabar | daily | weekly
@@ -43,7 +43,7 @@ strategies:
     symbols:
       - YM
     weight: 0.15
-    duty_cycle: 0.0211       
+    duty_cycle: 1.0       
     timeframe: 1h
     params: {}
 
@@ -51,7 +51,7 @@ strategies:
     symbols:
       - ES
     weight: 0.15
-    duty_cycle: 0.0246        
+    duty_cycle: 1.0        
     timeframe: 1h
     params: {}
 
@@ -59,7 +59,7 @@ strategies:
     symbols:
       - 6E
     weight: 0.25
-    duty_cycle: 0.0077      
+    duty_cycle: 1.0      
     timeframe: 1h
     params: {}
 
@@ -67,7 +67,7 @@ strategies:
     symbols:
       - NQ
     weight: 0.15
-    duty_cycle: 0.0047       
+    duty_cycle: 1.0       
     timeframe: 1h
     params: {}
 
@@ -75,7 +75,7 @@ strategies:
     symbols:
       - ES
     weight: 0.15
-    duty_cycle: 0.0087       
+    duty_cycle: 1.0      
     timeframe: 1h
     params: {}
 
@@ -83,7 +83,7 @@ strategies:
     symbols:
       - SI
     weight: 0.15
-    duty_cycle: 0.0113     
+    duty_cycle: 1.0   
     timeframe: 30m
     params: {}
 

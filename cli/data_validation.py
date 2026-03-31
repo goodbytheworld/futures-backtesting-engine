@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Sequence
 
 if TYPE_CHECKING:
-    from src.backtest_engine.settings import BacktestSettings
+    from src.backtest_engine.config import BacktestSettings
 
 
 def run_data_validation(

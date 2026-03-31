@@ -33,7 +33,7 @@ from src.backtest_engine.analytics.scenario_engine import (
     build_artifact_manifest,
     get_artifact_run_root,
 )
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
 
 
 @dataclass(frozen=True)
@@ -156,8 +156,8 @@ def build_stress_scenario_spec(
     Adapts the existing stress-slider inputs into the neutral scenario contract.
 
     Methodology:
-        Plan A keeps the current UI payload working by translating it once into
-        a typed scenario specification before queueing or execution begins.
+        The existing UI payload is translated once into a typed scenario
+        specification before queueing or execution begins.
     """
 
     resolved_settings = settings or BacktestSettings()
@@ -201,10 +201,9 @@ def _coerce_scenario_spec(
     Normalizes legacy stress-multiplier inputs into the typed scenario contract.
 
     Methodology:
-        The Streamlit dashboard still exists during the migration window, so the
-        runner preserves backward compatibility by adapting the older slider
-        payload at the execution boundary instead of forcing every caller to
-        know about the new typed contract immediately.
+        The runner adapts older stress-slider inputs at the execution boundary
+        instead of forcing every caller to know about the typed scenario
+        contract immediately.
     """
 
     if isinstance(scenario_input, ScenarioSpec):
@@ -221,10 +220,9 @@ def _write_scenario_config(
     Writes a derived portfolio config for a prepared scenario rerun.
 
     Methodology:
-        Plan A keeps the engine hot loop intact by materializing config-level
-        overrides before the child backtest starts. Replay windows are passed
-        separately through the scenario payload because the engine already
-        supports direct date filters.
+        Config-level overrides are materialized before the child backtest
+        starts. Replay windows are passed separately through the scenario
+        payload because the engine already supports direct date filters.
     """
 
     with source_config_path.open(encoding="utf-8") as fh:

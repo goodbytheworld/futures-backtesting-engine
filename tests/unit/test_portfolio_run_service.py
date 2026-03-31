@@ -156,7 +156,7 @@ def test_run_portfolio_backtest_loads_duty_cycle_and_weight_expansion(
         lambda name: DummyStrategy,
     )
     monkeypatch.setattr(
-        "src.backtest_engine.settings.BacktestSettings",
+        "src.backtest_engine.config.BacktestSettings",
         DummySettings,
     )
     monkeypatch.setattr(

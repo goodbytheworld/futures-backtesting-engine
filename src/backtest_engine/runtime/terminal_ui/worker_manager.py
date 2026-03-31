@@ -1,9 +1,8 @@
 """
-Backward-compatible re-export shim.
+Terminal runtime facade for worker and Redis lifecycle helpers.
 
-All worker and Redis lifecycle management now lives in
-``src.backtest_engine.services.worker_manager``. This module
-re-exports every public symbol so existing imports keep working.
+The implementation lives in ``src.backtest_engine.services.worker_manager``.
+This module keeps runtime-specific imports local to the terminal UI package.
 """
 
 from src.backtest_engine.services.worker_manager import (  # noqa: F401

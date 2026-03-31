@@ -1,85 +1,93 @@
 # Module Map
 
-Quick reference for the modules contributors are most likely to touch.
+Quick reference for contributors deciding where code belongs.
 
-## Portfolio Layer
+## Canonical Packages
 
-### `domain/`
-
-Pure contracts and enums.
-
-| Module | Main Types | Purpose |
-|---|---|---|
-| `contracts.py` | `PortfolioConfig`, `StrategySlot` | validated portfolio configuration |
-| `signals.py` | `StrategySignal`, `TargetPosition` | strategy output and allocator target types |
-| `policies.py` | `RebalancePolicy`, `ExecutionPolicy` | portfolio policy enums and execution settings |
-
-### `adapters/`
+### `src/backtest_engine/config/`
 
 | Module | Purpose |
 |---|---|
-| `legacy_strategy_adapter.py` | adapts `BaseStrategy(engine)` strategies into the portfolio engine |
+| `backtest.py` | shared runtime settings for data, execution, risk, batch, and paths |
+| `terminal_ui.py` | terminal runtime and dashboard settings |
+| `scenario.py` | scenario-engine defaults and retention settings |
 
-### `scheduling/`
-
-| Module | Purpose |
-|---|---|
-| `scheduler.py` | rebalance cadence decisions such as intrabar and daily scheduling |
-
-### `allocation/`
+### `src/backtest_engine/execution/`
 
 | Module | Purpose |
 |---|---|
-| `allocator.py` | converts signals and equity into target contract sizes |
+| `__init__.py` | `Order`, `Fill`, `Trade`, `ExecutionHandler` |
+| `order_book.py` | resting-order registry for single-asset execution |
+| `spread_model.py` | deterministic spread tick model |
+| `time_controls.py` | trading-session and EOD helpers |
 
-### `execution/`
-
-| Module | Purpose |
-|---|---|
-| `portfolio_book.py` | shared ledger, cash, positions, equity history |
-| `strategy_runner.py` | drives slot-local strategy instances and collects signals |
-
-### `engine/`
+### `src/backtest_engine/single_asset/`
 
 | Module | Purpose |
 |---|---|
-| `engine.py` | `PortfolioBacktestEngine`, the portfolio event loop |
+| `engine.py` | `BacktestEngine`, the canonical single-asset event loop |
+| `portfolio.py` | local portfolio/accounting model for the single engine |
+| `fast_bar.py` | fast bar adapter used inside the single-engine path |
 
-### `reporting/`
+### `src/backtest_engine/portfolio_layer/`
+
+| Area | Purpose |
+|---|---|
+| `domain/` | portfolio config, contracts, signals, policies |
+| `adapters/` | legacy strategy compatibility |
+| `allocation/` | signal-to-target sizing |
+| `execution/` | strategy runner, book, and bridge execution helpers |
+| `engine/` | `PortfolioBacktestEngine` event loop |
+| `reporting/` | artifact serialization and portfolio reports |
+
+### `src/backtest_engine/services/`
 
 | Module | Purpose |
 |---|---|
-| `results.py` | persists portfolio artifacts and reports |
+| `single_run_service.py` | single-run workflow |
+| `wfo_run_service.py` | walk-forward workflow |
+| `portfolio_run_service.py` | portfolio workflow and scenario metadata assembly |
+| `batch_run_service.py` | multi-scenario batch runs |
+| `wfo_batch_run_service.py` | multi-scenario WFO batch runs |
+| `artifact_service.py` | artifact discovery, bundle inspection, loading |
+| `scenario_job_service.py` | dashboard scenario job preparation |
+| `scenario_runner_service.py` | scenario rerun execution helpers |
+| `paths.py` | results path resolution |
+| `worker_manager.py` | compatibility facade for managed worker/redis lifecycle |
 
-## Top-Level Backtest Engine
-
-| Module | Purpose |
-|---|---|
-| `src/backtest_engine/engine.py` | single-asset event loop |
-| `src/backtest_engine/execution.py` | order, fill, trade, and execution handling |
-| `src/backtest_engine/portfolio.py` | single-engine portfolio/accounting object |
-| `src/backtest_engine/settings.py` | runtime settings and instrument specs |
-
-## Services Layer
-
-These modules are the public orchestration boundary between adapters and engines.
+### `src/backtest_engine/runtime/terminal_ui/`
 
 | Module | Purpose |
 |---|---|
-| `services/single_run_service.py` | single-run workflow |
-| `services/wfo_run_service.py` | walk-forward workflow |
-| `services/portfolio_run_service.py` | portfolio workflow and scenario metadata assembly |
-| `services/batch_run_service.py` | multi-scenario batch runs |
-| `services/wfo_batch_run_service.py` | multi-scenario WFO batch runs |
-| `services/artifact_service.py` | artifact discovery, bundle inspection, loading |
-| `services/scenario_job_service.py` | dashboard scenario job preparation |
-| `services/scenario_runner_service.py` | scenario rerun execution helpers |
-| `services/paths.py` | results path resolution |
-| `services/worker_manager.py` | compatibility facade for managed worker/redis lifecycle |
+| `app.py` | FastAPI app factory |
+| `composition.py` | dependency and lifecycle wiring |
+| `service.py` | artifact-loading and runtime query layer |
+| `routes_partials.py` | HTML partial endpoints |
+| `routes_charts.py` | chart JSON endpoints |
+| `routes_operations.py` | scenario and operational endpoints |
+| `exit_charts/` | topic-split exit-analysis chart builders |
+| `static/charts_shared.js` | shared chart loading and resize utilities |
+
+### `src/backtest_engine/optimization/`
+
+| Module | Purpose |
+|---|---|
+| `optimizer.py` | Optuna search and slice evaluation |
+| `wfv_optimizer.py` | fold orchestration |
+| `wfv_report.py` | fold models and report formatting |
+| `optuna_runtime.py` | optional Optuna runtime helpers |
+
+## Strategy Filters
+
+| Module | Purpose |
+|---|---|
+| `src/strategies/filters/core.py` | shared indicator/config helpers |
+| `src/strategies/filters/volatility.py` | volatility, shock, and stretch filters |
+| `src/strategies/filters/trend.py` | trend T-stat filter |
+| `src/strategies/filters/stationarity.py` | ADF and half-life filters |
+| `src/strategies/filters/kalman.py` | Kalman beta estimator |
 
 ## CLI Adapters
-
-These should stay thin.
 
 | Module | Trigger | Delegates To |
 |---|---|---|
@@ -93,45 +101,15 @@ These should stay thin.
 | `cli/batch.py` | `batch` | `services/batch_run_service.py` |
 | `cli/wfo_batch.py` | `wfo-batch` | `services/wfo_batch_run_service.py` |
 
-## Runtime UI
-
-| Module | Purpose |
-|---|---|
-| `runtime/terminal_ui/README.md` | runtime overview, tabs, queue/stress-testing notes |
-| `runtime/terminal_ui/app.py` | FastAPI app factory |
-| `runtime/terminal_ui/composition.py` | dependency and lifecycle wiring |
-| `runtime/terminal_ui/service.py` | artifact-loading and runtime query layer |
-| `runtime/terminal_ui/routes_partials.py` | HTML partial endpoints |
-| `runtime/terminal_ui/routes_charts.py` | chart JSON endpoints |
-| `runtime/terminal_ui/routes_operations.py` | scenario and operational endpoints |
-| `runtime/terminal_ui/exit_charts/` | topic-split exit-analysis chart builders |
-| `runtime/terminal_ui/static/charts_shared.js` | shared chart loading and resize utilities |
-
-## Strategy Filters
-
-| Module | Purpose |
-|---|---|
-| `src/strategies/filters/core.py` | shared indicator/config helpers |
-| `src/strategies/filters/volatility.py` | volatility, shock, and stretch filters |
-| `src/strategies/filters/trend.py` | trend T-stat filter |
-| `src/strategies/filters/stationarity.py` | ADF and half-life filters |
-| `src/strategies/filters/kalman.py` | Kalman beta estimator |
-
-## Optimization
-
-| Module | Purpose |
-|---|---|
-| `optimization/optimizer.py` | Optuna search and slice evaluation |
-| `optimization/wfv_optimizer.py` | fold orchestration |
-| `optimization/wfv_report.py` | fold models and report formatting |
-| `optimization/optuna_runtime.py` | optional Optuna runtime helpers |
-
 ## Contributor Shortcut
 
 If you are deciding where a change belongs:
 
 - CLI flag parsing or dispatch -> `run.py` or `cli/`
 - workflow orchestration -> `services/`
-- bar-by-bar execution -> engine modules
+- order simulation, spread rules, or session gating -> `execution/`
+- single-strategy event-loop behavior -> `single_asset/`
+- allocation, slot coordination, or shared-capital execution -> `portfolio_layer/`
 - saved metrics or reports -> `analytics/`
 - UI rendering or route handling -> `runtime/terminal_ui/`
+- runtime settings -> `config/`

@@ -1,9 +1,8 @@
 """
-Backward-compatible re-export shim.
+Terminal runtime facade for scenario-job services.
 
-All scenario job infrastructure now lives in
-``src.backtest_engine.services.scenario_job_service``. This module
-re-exports every public symbol so existing imports keep working.
+The implementation lives in ``src.backtest_engine.services.scenario_job_service``.
+This module keeps the runtime import surface small and local to terminal UI code.
 """
 
 from src.backtest_engine.services.scenario_job_service import (  # noqa: F401

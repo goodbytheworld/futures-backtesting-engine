@@ -36,7 +36,7 @@ Do not read unrelated files in `dev_context/` unless the task explicitly require
 ### Layering
 
 - `run.py` parses args
-- `run.py` should stay thin and delegate parser/runtime helpers into `cli/`
+- `run.py` stays thin and delegates parser/runtime helpers into `cli/`
 - `cli/` adapts args to services
 - `services/` orchestrates use cases
 - engines execute bar-by-bar logic
@@ -44,14 +44,14 @@ Do not read unrelated files in `dev_context/` unless the task explicitly require
 
 ### Settings
 
-- shared runtime configuration belongs in `src/backtest_engine/settings.py`
+- canonical shared runtime configuration lives in `src/backtest_engine/config/`
 - do not scatter new magic numbers through engines or services
 
 ## Engine Split
 
 There are two different engines:
 
-### `src/backtest_engine/engine.py`
+### `src/backtest_engine/single_asset/engine.py`
 
 - `BacktestEngine`
 - single strategy, single primary symbol
@@ -72,8 +72,8 @@ The active UI/runtime is `src/backtest_engine/runtime/terminal_ui/`.
 Rules:
 
 - `service.py` is the runtime-facing data and artifact layer
-- `routes_*.py` should stay thin
-- builders should return payloads, not perform app-level orchestration
+- `routes_*.py` stay thin
+- builders return payloads, not app-level orchestration
 - templates and static assets are terminal UI specific
 - shared chart/request helpers live in `static/charts_shared.js`
 
@@ -95,14 +95,14 @@ Implications:
 - indicators should be precomputed in `__init__`
 - `on_bar()` should stay lightweight
 - portfolio mode uses adapters to support this contract
-- reusable strategy filters now live under `src/strategies/filters/`
+- reusable strategy filters live under `src/strategies/filters/`
 
 ## Where To Put Changes
 
 - new CLI mode or CLI adapter behavior -> `run.py`, `cli/`
 - CLI examples / help text / onboarding commands -> `USAGE.md`, `cli/main_parser.py`
 - reusable workflow logic -> `src/backtest_engine/services/`
-- execution semantics -> engine modules
+- execution semantics -> `src/backtest_engine/execution/`, `single_asset/`, or `portfolio_layer/`
 - artifacts, metrics, report serialization -> `src/backtest_engine/analytics/`
 - strategy implementations -> `src/strategies/`
 - UI payloads or routes -> `src/backtest_engine/runtime/terminal_ui/`
@@ -118,9 +118,12 @@ Implications:
 
 ## Useful Local References
 
-- `src/strategies/README.md`
+- `src/backtest_engine/config/README.md`
+- `src/backtest_engine/execution/README.md`
+- `src/backtest_engine/single_asset/README.md`
 - `src/backtest_engine/analytics/README.md`
 - `src/backtest_engine/optimization/README.md`
 - `src/backtest_engine/portfolio_layer/README.md`
+- `src/backtest_engine/runtime/README.md`
 - `tests/README.md`
 - `USAGE.md`

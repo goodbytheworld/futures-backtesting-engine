@@ -1,15 +1,15 @@
 """
 src/backtest_engine/portfolio_layer/adapters/legacy_strategy_adapter.py
 
-Bridges the legacy single-asset BaseStrategy API to the portfolio engine.
+Adapts the single-asset BaseStrategy API to the portfolio engine.
 
 Background
 ----------
 All existing strategies inherit from BaseStrategy (src/strategies/base.py) and
-expect a BacktestEngine-shaped object as their first constructor argument.  The
+expect a BacktestEngine-shaped object as their first constructor argument. The
 portfolio engine is structurally different (shared capital, multi-symbol), so
-this module provides a thin shim that satisfies the strategy's __init__ contract
-without introducing a circular dependency on BacktestEngine.
+this module provides a minimal adapter surface that satisfies the strategy
+constructor contract without introducing a circular dependency on BacktestEngine.
 
 LIMITATIONS
 -----------
@@ -40,7 +40,7 @@ import pandas as pd
 
 class _MockPortfolio:
     """
-    Minimal portfolio shim so BaseStrategy helpers don't crash.
+    Minimal portfolio adapter state so BaseStrategy helpers do not fail.
 
     Instance-level dict prevents shared mutable state across strategy instances.
     """
@@ -51,7 +51,7 @@ class _MockPortfolio:
 
 class _MockEngine:
     """
-    Minimal engine shim passed to strategy __init__.
+    Minimal engine adapter passed to strategy construction.
 
     Satisfies the BaseStrategy(engine) constructor contract without requiring
     the full BacktestEngine class.
@@ -85,7 +85,7 @@ class _PatchedSettings:
 
 class LegacyStrategyAdapter:
     """
-    Constructs a legacy single-asset strategy instance for use in the portfolio engine.
+    Constructs a single-asset strategy instance for use in the portfolio engine.
 
     Methodology:
         1. Creates a _MockEngine with the strategy's specific symbol data.

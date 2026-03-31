@@ -195,6 +195,23 @@ def test_rolling_sharpe_finite_after_warmup() -> None:
     assert len(finite_values) > 0, "No finite Sharpe values after warm-up window."
 
 
+def test_rolling_sharpe_skips_flat_windows_instead_of_emitting_huge_spikes() -> None:
+    """
+    Near-zero volatility windows should stay NaN rather than creating huge
+    synthetic Sharpe spikes in the terminal mini-chart.
+    """
+    index = pd.date_range("2024-01-01", periods=140, freq="1D")
+    equity = pd.Series([100_000.0] * 100 + [100_200.0, 100_100.0, 100_250.0, 100_180.0] * 10, index=index)
+    history = pd.DataFrame({"total_value": equity}, index=index)
+
+    sharpe = compute_rolling_sharpe(history, window_days=45)
+
+    assert sharpe.loc[: index[89]].dropna().empty
+    finite_values = sharpe.dropna()
+    assert not finite_values.empty
+    assert float(finite_values.abs().max()) < 100.0
+
+
 # ── Test 6: Per-strategy summary returns trade count ─────────────────────────
 
 def test_per_strategy_summary_trade_counts() -> None:

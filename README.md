@@ -132,6 +132,7 @@ sudo apt install redis-server
 |-- CONTRIBUTING.md
 |-- docs/
 |   |-- ARCHITECTURE.md
+|   |-- EXECUTION_CONTRACT.md
 |   |-- MODULE_MAP.md
 |   `-- agents.md
 |-- cli/
@@ -149,20 +150,24 @@ sudo apt install redis-server
     |-- data/
     |-- strategies/
     `-- backtest_engine/
-        |-- engine.py
-        |-- execution.py
         |-- analytics/
+        |-- config/
+        |-- execution/
         |-- optimization/
+        |-- portfolio_layer/
+        |-- runtime/
         |-- services/
-        |-- runtime/terminal_ui/
-        `-- portfolio_layer/
+        |-- single_asset/
+        `-- serialization.py
 ```
 
 ## Architecture At A Glance
 
 - `run.py` parses CLI args and dispatches to `cli/`.
 - `cli/` is intentionally thin and delegates orchestration to `src/backtest_engine/services/`.
-- `src/backtest_engine/engine.py` is the single-asset execution engine.
+- `src/backtest_engine/single_asset/engine.py` is the canonical single-asset execution engine.
+- `src/backtest_engine/execution/` is the shared execution kernel package.
+- `src/backtest_engine/config/` is the canonical home for runtime settings models.
 - `src/backtest_engine/portfolio_layer/engine/engine.py` is the portfolio event loop with shared capital and multi-slot execution.
 - `src/backtest_engine/runtime/terminal_ui/` is the active FastAPI analytics UI.
 - `src/backtest_engine/analytics/` contains artifact builders, reports, metrics, and shared analytics transforms.
@@ -179,13 +184,18 @@ sudo apt install redis-server
 ## Documentation Map
 
 - [Architecture](docs/ARCHITECTURE.md) - layer boundaries, engine roles, artifact flow.
-- [Module Map](docs/MODULE_MAP.md) - quick reference for portfolio layer and entry points.
+- [Execution Contract](docs/EXECUTION_CONTRACT.md) - shared execution-kernel semantics, gap rules, and intrabar conflict policy.
+- [Module Map](docs/MODULE_MAP.md) - quick reference for canonical packages and contributor entry points.
 - [Agent Context](docs/agents.md) - compact project context for LLMs and automation agents.
 - [Usage Guide](USAGE.md) - CLI examples, common workflows, and dashboard launch commands.
 - [Contributing Guide](CONTRIBUTING.md) - setup, workflow, tests, strategy additions, PR expectations.
 - [Analytics README](src/backtest_engine/analytics/README.md)
+- [Config README](src/backtest_engine/config/README.md)
+- [Execution README](src/backtest_engine/execution/README.md)
 - [Optimization README](src/backtest_engine/optimization/README.md)
 - [Portfolio Layer README](src/backtest_engine/portfolio_layer/README.md)
+- [Runtime README](src/backtest_engine/runtime/README.md)
+- [Single-Asset README](src/backtest_engine/single_asset/README.md)
 - [Terminal UI README](src/backtest_engine/runtime/terminal_ui/README.md)
 - [Strategies README](src/strategies/README.md)
 - [Tests README](tests/README.md)

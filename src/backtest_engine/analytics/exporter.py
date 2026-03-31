@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from src.backtest_engine.analytics.artifact_contract import build_artifact_identity
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
 from src.backtest_engine.serialization import dumps_json
 
 

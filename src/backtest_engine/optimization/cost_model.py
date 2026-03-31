@@ -6,14 +6,14 @@ from BacktestSettings.
 """
 from typing import Optional
 
-from ..settings import BacktestSettings
+from ..config import BacktestSettings
 
 
 class CostModel:
     """
     Calculates transaction costs and slippage for a specific instrument.
 
-    All instrument specs live in settings.py (Single Source of Truth).
+    All instrument specs live in the config package (Single Source of Truth).
 
     Usage:
         cost = CostModel("GC")

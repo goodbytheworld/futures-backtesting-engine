@@ -91,7 +91,7 @@ def save_portfolio_results(
     _specs: Dict[str, Dict] = instrument_specs or {}
     if not _specs:
         try:
-            from src.backtest_engine.settings import BacktestSettings
+            from src.backtest_engine.config import BacktestSettings
             _specs = BacktestSettings().instrument_specs
         except Exception:
             pass

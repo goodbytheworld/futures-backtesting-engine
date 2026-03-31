@@ -14,8 +14,8 @@ from src.backtest_engine.analytics.exit_analysis import enrich_trades_with_exit_
 from src.backtest_engine.analytics.exporter import save_backtest_results
 from src.backtest_engine.execution import ExecutionHandler, Order
 from src.backtest_engine.portfolio_layer.reporting.results import save_portfolio_results
-from src.backtest_engine.settings import BacktestSettings
-from src.backtest_engine.spread_model import compute_spread_ticks
+from src.backtest_engine.config import BacktestSettings
+from src.backtest_engine.execution.spread_model import compute_spread_ticks
 
 
 @dataclass
@@ -27,6 +27,10 @@ class StubSettings:
     spread_step_multiplier: float = 1.5
     spread_vol_lookback: int = 20
     spread_vol_baseline_lookback: int = 100
+    spread_tick_multipliers_by_order_type: dict = None
+    commission_rate_by_order_type: dict = None
+    intrabar_conflict_resolution: str = "pessimistic"
+    intrabar_resolution_timeframe: str | None = None
 
     def get_instrument_spec(self, symbol: str) -> dict:
         return {"tick_size": 0.25, "multiplier": 50.0}
@@ -34,6 +38,24 @@ class StubSettings:
 
 def _bar(timestamp: str, open_price: float) -> pd.Series:
     return pd.Series({"open": open_price, "close": open_price}, name=pd.Timestamp(timestamp))
+
+
+def _ohlc_bar(
+    timestamp: str,
+    open_price: float,
+    high_price: float,
+    low_price: float,
+    close_price: float,
+) -> pd.Series:
+    return pd.Series(
+        {
+            "open": open_price,
+            "high": high_price,
+            "low": low_price,
+            "close": close_price,
+        },
+        name=pd.Timestamp(timestamp),
+    )
 
 
 def test_partial_fill_commission_residue_does_not_inflate() -> None:
@@ -169,6 +191,133 @@ def test_effective_spread_ticks_override_takes_precedence() -> None:
     assert fill is not None
     expected = 100.0 + 3 * 0.25
     assert fill.fill_price == expected
+
+
+def test_buy_limit_gap_fills_at_open_not_limit() -> None:
+    """Buy limit orders must fill at the next open when price gaps through the limit."""
+    handler = ExecutionHandler(StubSettings(spread_ticks=0))
+    bar = _ohlc_bar("2024-01-01 09:30:00", open_price=98.0, high_price=101.0, low_price=97.0, close_price=100.0)
+
+    fill = handler.execute_order(
+        Order(
+            symbol="ES",
+            quantity=1,
+            side="BUY",
+            order_type="LIMIT",
+            limit_price=100.0,
+        ),
+        bar,
+    )
+
+    assert fill is not None
+    assert fill.fill_price == 98.0
+
+
+def test_sell_stop_gap_fills_at_open_not_stop() -> None:
+    """Sell stop orders must fill at the next open when price gaps through the stop."""
+    handler = ExecutionHandler(StubSettings(spread_ticks=0))
+    bar = _ohlc_bar("2024-01-01 09:30:00", open_price=90.0, high_price=91.0, low_price=88.0, close_price=89.0)
+
+    fill = handler.execute_order(
+        Order(
+            symbol="ES",
+            quantity=1,
+            side="SELL",
+            order_type="STOP",
+            stop_price=95.0,
+        ),
+        bar,
+    )
+
+    assert fill is not None
+    assert fill.fill_price == 90.0
+
+
+def test_untriggered_ioc_order_is_cancelled() -> None:
+    """IOC resting orders must cancel when the first eligible bar does not fill them."""
+    handler = ExecutionHandler(StubSettings(spread_ticks=0))
+    bar = _ohlc_bar("2024-01-01 09:30:00", open_price=101.0, high_price=102.0, low_price=100.5, close_price=101.5)
+    order = Order(
+        symbol="ES",
+        quantity=1,
+        side="BUY",
+        order_type="LIMIT",
+        limit_price=100.0,
+        time_in_force="IOC",
+    )
+
+    fill = handler.execute_order(order, bar)
+
+    assert fill is None
+    assert order.status == "CANCELLED"
+
+
+def test_buy_stop_limit_intrabar_fills_at_limit_after_trigger() -> None:
+    """BUY stop-limit should fill at the limit when the bar proves both trigger and limit."""
+    handler = ExecutionHandler(StubSettings(spread_ticks=0))
+    bar = _ohlc_bar("2024-01-01 09:30:00", open_price=100.0, high_price=106.0, low_price=101.0, close_price=105.0)
+
+    fill = handler.execute_order(
+        Order(
+            symbol="ES",
+            quantity=1,
+            side="BUY",
+            order_type="STOP_LIMIT",
+            stop_price=105.0,
+            limit_price=101.0,
+        ),
+        bar,
+    )
+
+    assert fill is not None
+    assert fill.fill_price == 101.0
+
+
+def test_sell_stop_limit_intrabar_fills_at_limit_after_trigger() -> None:
+    """SELL stop-limit should fill at the limit when the bar proves both trigger and limit."""
+    handler = ExecutionHandler(StubSettings(spread_ticks=0))
+    bar = _ohlc_bar("2024-01-01 09:30:00", open_price=100.0, high_price=101.0, low_price=94.0, close_price=95.0)
+
+    fill = handler.execute_order(
+        Order(
+            symbol="ES",
+            quantity=1,
+            side="SELL",
+            order_type="STOP_LIMIT",
+            stop_price=95.0,
+            limit_price=99.0,
+        ),
+        bar,
+    )
+
+    assert fill is not None
+    assert fill.fill_price == 99.0
+
+
+def test_per_order_type_cost_overrides_are_applied() -> None:
+    """Execution cost overrides must be configurable by order type."""
+    settings = StubSettings(
+        spread_ticks=1,
+        spread_tick_multipliers_by_order_type={"LIMIT": 2.0},
+        commission_rate_by_order_type={"LIMIT": 3.5},
+    )
+    handler = ExecutionHandler(settings)
+    bar = _ohlc_bar("2024-01-01 09:30:00", open_price=100.0, high_price=101.0, low_price=99.0, close_price=100.0)
+
+    fill = handler.execute_order(
+        Order(
+            symbol="ES",
+            quantity=2,
+            side="BUY",
+            order_type="LIMIT",
+            limit_price=100.0,
+        ),
+        bar,
+    )
+
+    assert fill is not None
+    assert fill.slippage == 0.5
+    assert fill.commission == 7.0
 
 
 def test_adaptive_spread_widens_in_high_vol() -> None:

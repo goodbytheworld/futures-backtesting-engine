@@ -2,12 +2,22 @@
 
 This package contains the active FastAPI analytics interface for saved backtest artifacts.
 
-## Responsibilities
+## Purpose
 
-- load the latest result bundle or an explicitly selected artifact root
-- render terminal-style HTML partials and charts
+The terminal UI is a delivery surface, not the source of truth for engine logic.
+
+It should:
+
+- load saved artifacts
+- assemble terminal-style HTML partials and chart payloads
 - expose operational endpoints for scenario jobs, Redis, and worker lifecycle
 - host the Stress Testing tab for queue-driven reruns
+
+It should not:
+
+- own backtest execution semantics
+- duplicate analytics transforms that already belong in `analytics/`
+- accumulate workflow orchestration that belongs in `services/`
 
 ## Main Modules
 
@@ -19,9 +29,16 @@ This package contains the active FastAPI analytics interface for saved backtest 
 | `routes_partials.py` | HTML partial routes |
 | `routes_charts.py` | chart payload routes |
 | `routes_operations.py` | stress-testing and operational routes |
-| `jobs.py` | compatibility re-export shim for scenario job infrastructure |
+| `jobs.py` | runtime facade for scenario job infrastructure |
 | `worker_manager.py` | managed local worker lifecycle helpers |
 | `windows_worker.py` | Windows-specific worker helpers |
+
+## Contributor Rules
+
+- keep `routes_*.py` thin
+- put reusable analytics math in `src/backtest_engine/analytics/`
+- put artifact and scenario orchestration in `src/backtest_engine/services/`
+- keep this package focused on HTTP, rendering, and runtime composition
 
 ## Tabs
 
@@ -46,14 +63,14 @@ What exists now:
 - queueable execution-shock reruns for portfolio artifacts
 - durable job metadata and SSE progress updates
 
-What is not done yet:
+What is intentionally still missing:
 
 - full frontend for Monte Carlo and simulation families
 - public queue surface for market replay, tail-event reruns, or simulation jobs
-- rich scenario-family launcher beyond execution-shock reruns
+- rich scenario-family launchers beyond execution-shock reruns
 
-## Relationship To Other Packages
+## Related Packages
 
 - artifact loading and scenario orchestration are delegated to `src/backtest_engine/services/`
-- reusable analytics logic should live in `src/backtest_engine/analytics/`
-- this package should stay focused on HTTP, rendering, and runtime composition
+- reusable analytics logic lives in `src/backtest_engine/analytics/`
+- runtime-wide packaging notes live in `src/backtest_engine/runtime/README.md`

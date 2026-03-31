@@ -81,7 +81,7 @@ class TerminalShellContext:
 def _fallback_terminal_ui_settings() -> Any:
     """Returns a default terminal UI settings object when env-backed loading fails."""
     try:
-        from src.backtest_engine.settings import TerminalUISettings
+        from src.backtest_engine.config import TerminalUISettings
 
         return TerminalUISettings()
     except Exception:
@@ -263,7 +263,7 @@ def load_terminal_runtime_context() -> TerminalRuntimeContext:
         framework imports.
     """
     try:
-        from src.backtest_engine.settings import BacktestSettings
+        from src.backtest_engine.config import BacktestSettings
 
         settings = BacktestSettings()
         return _build_terminal_runtime_context(

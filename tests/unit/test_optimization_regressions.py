@@ -10,7 +10,7 @@ from src.backtest_engine.optimization.optimizer import OptunaOptimizer
 from src.backtest_engine.optimization.wfv_optimizer import WalkForwardOptimizer
 from src.backtest_engine.optimization.wfv_optimizer import WFVReport
 from src.backtest_engine.optimization.wfv_optimizer import FoldResult
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
 
 
 def test_purged_fold_generator_keeps_test_window_intact_when_embargo_is_set() -> None:

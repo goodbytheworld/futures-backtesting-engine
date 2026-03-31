@@ -20,15 +20,17 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import pandas as pd
 
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
 from src.backtest_engine.execution import Order
-from src.backtest_engine.spread_model import compute_spread_ticks
-from src.backtest_engine.time_controls import is_session_active, parse_hhmm
+from src.backtest_engine.execution.spread_model import compute_spread_ticks
+from src.backtest_engine.execution.time_controls import is_session_active, parse_hhmm
 from src.data.data_lake import DataLake
 
 from ..domain.contracts import PortfolioConfig
-from ..domain.signals import StrategySignal, TargetPosition
+from ..domain.orders import PendingPortfolioOrder
+from ..domain.signals import RequestedOrderIntent, StrategySignal, TargetPosition
 from ..execution.portfolio_book import PortfolioBook
+from ..execution.order_book import PortfolioOrderBook
 from ..allocation.allocator import Allocator
 from ..execution.strategy_runner import StrategyRunner
 from ..reporting.results import save_portfolio_results
@@ -97,7 +99,7 @@ class PortfolioBacktestEngine:
 
         from src.backtest_engine.execution import ExecutionHandler
 
-        # One ExecutionHandler per slot — commission/slippage from settings.py
+        # One ExecutionHandler per slot — commission/slippage from the config package
         self._execution_handlers: Dict[int, Any] = {
             i: ExecutionHandler(self.settings) for i in range(len(config.slots))
         }
@@ -110,6 +112,9 @@ class PortfolioBacktestEngine:
         self._data_map: Dict[Tuple[int, str], pd.DataFrame] = {}
         # Symbol -> last-available bar lookup: updated as bars are visited
         self._last_bars: Dict[Tuple[int, str], pd.Series] = {}
+        # Optional lower-timeframe replay data used only for explicit
+        # intrabar OCO conflict resolution.
+        self._intrabar_data_map: Dict[Tuple[int, str], pd.DataFrame] = {}
 
         # Computed once from real data after _load_data(); passed to Allocator.
         self._bars_per_year: int = 3276  # Conservative default (30m, 252d x 13 bars)
@@ -208,6 +213,7 @@ class PortfolioBacktestEngine:
             execute_at_close=execute_at_close,
             reason=reason,
             effective_spread_ticks=effective_spread_ticks,
+            reduce_only=True,
         )
 
     # ── Data loading ───────────────────────────────────────────────────────────
@@ -246,6 +252,50 @@ class PortfolioBacktestEngine:
             span_years = max(span_days / 365.25, 1e-6)
             self._bars_per_year = max(1, round(len(first_df) / span_years))
         print(f"[Portfolio] bars_per_year estimate: {self._bars_per_year:,}")
+
+    def _intrabar_conflict_replay_enabled(self) -> bool:
+        """
+        Returns True when lower-timeframe conflict replay is explicitly enabled.
+        """
+        return (
+            str(self.settings.intrabar_conflict_resolution).lower() == "lower_timeframe"
+            and bool(self.settings.intrabar_resolution_timeframe)
+        )
+
+    def _get_intrabar_conflict_data(
+        self,
+        slot_id: int,
+        symbol: str,
+    ) -> Optional[pd.DataFrame]:
+        """
+        Returns lower-timeframe replay data for one (slot, symbol) on demand.
+
+        Methodology:
+            The engine stays on the primary strategy timeframe during normal
+            execution. Lower-timeframe data is loaded only when an actual same-
+            bar protective OCO conflict needs replay. Missing replay data is a
+            valid outcome and must fall back to the pessimistic stop-first
+            policy.
+        """
+        if not self._intrabar_conflict_replay_enabled():
+            return None
+
+        cache_key = (slot_id, symbol)
+        if cache_key in self._intrabar_data_map:
+            return self._intrabar_data_map[cache_key]
+
+        timeframe = str(self.settings.intrabar_resolution_timeframe)
+        df = self.data_lake.load(
+            symbol,
+            timeframe=timeframe,
+            start_date=self.start_date,
+            end_date=self.end_date,
+        )
+        if df.empty:
+            self._intrabar_data_map[cache_key] = pd.DataFrame()
+        else:
+            self._intrabar_data_map[cache_key] = df
+        return self._intrabar_data_map[cache_key]
 
     # ── Spread helpers ─────────────────────────────────────────────────────────
 
@@ -312,7 +362,12 @@ class PortfolioBacktestEngine:
         execute_at_close: bool = False,
         reason: str = "PORTFOLIO_SYNC",
         effective_spread_ticks: Optional[int] = None,
-    ) -> None:
+        reduce_only: bool = False,
+        order_type: str = "MARKET",
+        limit_price: Optional[float] = None,
+        stop_price: Optional[float] = None,
+        time_in_force: str = "DAY",
+    ) -> bool:
         """
         Simulates a fill via ExecutionHandler and applies it to PortfolioBook.
 
@@ -330,6 +385,11 @@ class PortfolioBacktestEngine:
             reason: Tag written to the order.
             effective_spread_ticks: Pre-computed tick count from the spread model.
                                     If None, ExecutionHandler reads settings.spread_ticks.
+            reduce_only: Carries reduce-only intent into the shared Order record.
+            order_type: Execution order type passed into the shared handler.
+            limit_price: Optional limit price for LIMIT / STOP_LIMIT orders.
+            stop_price: Optional stop price for STOP / STOP_LIMIT orders.
+            time_in_force: Time-in-force passed into the shared handler.
         """
         spec = self.settings.get_instrument_spec(symbol)
         multiplier = spec["multiplier"]
@@ -338,9 +398,13 @@ class PortfolioBacktestEngine:
             symbol=symbol,
             quantity=abs(quantity),
             side=side,
-            order_type="MARKET",
+            order_type=order_type,
             reason=reason,
             timestamp=bar.name if hasattr(bar, "name") else None,
+            reduce_only=reduce_only,
+            limit_price=limit_price,
+            stop_price=stop_price,
+            time_in_force=time_in_force,
         )
 
         handler = self._execution_handlers[slot_id]
@@ -361,36 +425,100 @@ class PortfolioBacktestEngine:
                 multiplier=multiplier,
                 timestamp=fill.timestamp,
             )
+            return True
+        return False
 
     # ── Order delta computation ────────────────────────────────────────────────
 
     def _compute_orders(
         self,
         targets: List[TargetPosition],
-        pending_orders: List[Tuple[int, str, str, float, str]],
-    ) -> List[Tuple[int, str, str, float, str]]:
+        pending_orders: List[PendingPortfolioOrder],
+        signal_templates: Optional[Dict[Tuple[int, str], StrategySignal]] = None,
+        replacement_keys: Optional[set[Tuple[int, str]]] = None,
+    ) -> List[PendingPortfolioOrder]:
         """
         Computes order deltas from target positions vs current holdings + pending orders.
 
+        Args:
+            targets: Desired target positions.
+            pending_orders: Already-active pending orders for netting.
+            signal_templates: Optional fresh signal metadata from the current bar.
+
         Returns:
-            List of (slot_id, symbol, side, abs_quantity, reason) tuples.
+            List of PendingPortfolioOrder objects.
         """
         pending_qty: Dict[Tuple[int, str], float] = {}
-        for (sid, sym, side, qty, reason) in pending_orders:
-            signed_qty = qty if side == "BUY" else -qty
-            pending_qty[(sid, sym)] = pending_qty.get((sid, sym), 0.0) + signed_qty
+        resting_template_keys: set[Tuple[int, str]] = set()
+        signal_templates = signal_templates or {}
+        replacement_keys = replacement_keys or set()
+        for order in pending_orders:
+            key = (order.slot_id, order.symbol)
+            if key in replacement_keys and order.owns_resting_execution_state:
+                continue
+            pending_qty[key] = pending_qty.get(key, 0.0) + order.signed_quantity
+            if order.owns_resting_execution_state:
+                resting_template_keys.add(key)
 
         orders = []
         for target in targets:
+            target_key = (target.slot_id, target.symbol)
+            if target_key in resting_template_keys and target_key not in replacement_keys:
+                # A live non-market signal-template order already owns the
+                # execution lifecycle for this key. Do not synthesize extra
+                # allocator deltas around it until explicit cancel/replace
+                # semantics exist.
+                continue
+
             current = self.book.get_position(target.slot_id, target.symbol)
-            pending = pending_qty.get((target.slot_id, target.symbol), 0.0)
-            delta = target.target_qty - (current + pending)
+            pending = pending_qty.get(target_key, 0.0)
+            current_exposure = current + pending
+            delta = target.target_qty - current_exposure
 
             if abs(delta) < 0.5:   # ignore sub-contract deltas
                 continue
 
             side = "BUY" if delta > 0 else "SELL"
-            orders.append((target.slot_id, target.symbol, side, abs(delta), target.reason))
+            reduce_only = (
+                (current_exposure > 0 and delta < 0 and target.target_qty >= 0)
+                or (current_exposure < 0 and delta > 0 and target.target_qty <= 0)
+            )
+            template = signal_templates.get(target_key)
+            order_type = "MARKET"
+            limit_price = None
+            stop_price = None
+            time_in_force = "GTC"
+            source = "TARGET_SYNC"
+            requested_order_id = None
+
+            requested_intent = self._matching_requested_intent(template, side)
+            if requested_intent is not None:
+                requested_type = str(requested_intent.order_type or "MARKET").upper()
+                if self._requested_intent_has_required_prices(requested_intent, requested_type):
+                    order_type = requested_type
+                    limit_price = requested_intent.limit_price
+                    stop_price = requested_intent.stop_price
+                    time_in_force = str(requested_intent.time_in_force or "GTC").upper()
+                    source = "SIGNAL_TEMPLATE"
+                    requested_order_id = requested_intent.order_id
+                    reduce_only = reduce_only or bool(requested_intent.reduce_only)
+
+            orders.append(
+                PendingPortfolioOrder(
+                    slot_id=target.slot_id,
+                    symbol=target.symbol,
+                    side=side,
+                    quantity=abs(delta),
+                    reason=target.reason,
+                    order_type=order_type,
+                    limit_price=limit_price,
+                    stop_price=stop_price,
+                    time_in_force=time_in_force,
+                    reduce_only=reduce_only,
+                    source=source,
+                    requested_order_id=requested_order_id,
+                )
+            )
 
         return orders
 
@@ -484,6 +612,420 @@ class PortfolioBacktestEngine:
             return False
         return timestamp.time() >= eod_close_time
 
+    @staticmethod
+    def _next_eligible_timestamp(
+        timestamps: pd.DatetimeIndex,
+        index: int,
+    ) -> Optional[object]:
+        """
+        Returns the next union-timeline timestamp, if any.
+        """
+        if index + 1 >= len(timestamps):
+            return None
+        return timestamps[index + 1]
+
+    def _effective_pending_quantity(self, order: PendingPortfolioOrder) -> float:
+        """
+        Returns the executable quantity after applying reduce-only rules.
+        """
+        requested = float(abs(order.quantity))
+        if requested <= 0:
+            return 0.0
+        if not order.reduce_only:
+            return requested
+
+        current_qty = float(self.book.get_position(order.slot_id, order.symbol))
+        if order.side == "BUY":
+            if current_qty >= 0:
+                return 0.0
+            return min(requested, abs(current_qty))
+        if order.side == "SELL":
+            if current_qty <= 0:
+                return 0.0
+            return min(requested, abs(current_qty))
+        return 0.0
+
+    @staticmethod
+    def _is_fresh_current_bar_order(
+        order: PendingPortfolioOrder,
+        timestamp: object,
+    ) -> bool:
+        """
+        Returns True when the order was queued on the same bar as the EOD check.
+        """
+        if order.placed_at is None:
+            return False
+        return pd.Timestamp(order.placed_at) == pd.Timestamp(timestamp)
+
+    @staticmethod
+    def _is_eod_eligible_pending_order(
+        order: PendingPortfolioOrder,
+        timestamp: object,
+    ) -> bool:
+        """
+        Returns True when a pending order existed before this bar and is already
+        eligible to execute.
+        """
+        if PortfolioBacktestEngine._is_fresh_current_bar_order(order, timestamp):
+            return False
+        if order.eligible_from is None:
+            return True
+        return pd.Timestamp(timestamp) >= pd.Timestamp(order.eligible_from)
+
+    @staticmethod
+    def _signal_requested_orders(
+        template: Optional[StrategySignal],
+    ) -> Tuple[RequestedOrderIntent, ...]:
+        """
+        Returns the full raw order set preserved on a strategy signal.
+        """
+        if template is None:
+            return ()
+        if template.requested_orders:
+            return template.requested_orders
+        if template.requested_order_id is None and template.requested_order_type is None:
+            return ()
+        return (
+            RequestedOrderIntent(
+                order_id=str(template.requested_order_id or ""),
+                side=str(template.requested_side or "").upper(),
+                quantity=float(template.requested_quantity or 0.0),
+                order_type=str(template.requested_order_type or "MARKET").upper(),
+                reason=template.reason,
+                limit_price=template.requested_limit_price,
+                stop_price=template.requested_stop_price,
+                time_in_force=str(template.requested_time_in_force or "GTC").upper(),
+                reduce_only=bool(template.requested_reduce_only),
+            ),
+        )
+
+    def _matching_requested_intent(
+        self,
+        template: Optional[StrategySignal],
+        side: str,
+    ) -> Optional[RequestedOrderIntent]:
+        """
+        Returns the raw requested order that should template the normal delta.
+
+        Methodology:
+            The portfolio path stays target-driven, so only the requested order
+            whose side matches the computed delta is allowed to template that
+            delta. This lets the engine ignore sibling protective exits when a
+            strategy emits both an entry and a bracket on the same bar.
+        """
+        for intent in self._signal_requested_orders(template):
+            if str(intent.side).upper() == side:
+                return intent
+        return None
+
+    @staticmethod
+    def _requested_intent_has_required_prices(
+        intent: RequestedOrderIntent,
+        order_type: str,
+    ) -> bool:
+        """
+        Validates minimum price metadata before a requested intent becomes real.
+        """
+        if order_type == "LIMIT":
+            return intent.limit_price is not None
+        if order_type == "STOP":
+            return intent.stop_price is not None
+        if order_type == "STOP_LIMIT":
+            return intent.limit_price is not None and intent.stop_price is not None
+        return order_type == "MARKET"
+
+    def _replacement_keys(
+        self,
+        pending_orders: List[PendingPortfolioOrder],
+        signal_templates: Dict[Tuple[int, str], StrategySignal],
+    ) -> set[Tuple[int, str]]:
+        """
+        Returns keys whose live resting signal-template orders must be replaced.
+        """
+        active_resting_keys = {
+            (order.slot_id, order.symbol)
+            for order in pending_orders
+            if order.owns_resting_execution_state
+        }
+        return {
+            key
+            for key in signal_templates
+            if key in active_resting_keys
+        }
+
+    def _build_protective_orders(
+        self,
+        signal_templates: Dict[Tuple[int, str], StrategySignal],
+    ) -> List[PendingPortfolioOrder]:
+        """
+        Builds standalone protective stop/target orders for already-open positions.
+
+        Methodology:
+            Phase 9 still avoids pending-entry child-order semantics. Protective
+            siblings are only created when a real portfolio position already
+            exists, and their quantity is pinned to the current open exposure so
+            reduce-only semantics are enforced by the OMS before execution.
+        """
+        protective_orders: List[PendingPortfolioOrder] = []
+
+        for key, template in signal_templates.items():
+            slot_id, symbol = key
+            current_qty = float(self.book.get_position(slot_id, symbol))
+            if abs(current_qty) < 0.5:
+                continue
+
+            protective_side = "SELL" if current_qty > 0 else "BUY"
+            for intent in self._signal_requested_orders(template):
+                order_type = str(intent.order_type).upper()
+                if not intent.reduce_only or order_type == "MARKET":
+                    continue
+                if str(intent.side).upper() != protective_side:
+                    continue
+                if not self._requested_intent_has_required_prices(intent, order_type):
+                    continue
+
+                protective_orders.append(
+                    PendingPortfolioOrder(
+                        slot_id=slot_id,
+                        symbol=symbol,
+                        side=protective_side,
+                        quantity=abs(current_qty),
+                        reason=intent.reason,
+                        order_type=order_type,
+                        limit_price=intent.limit_price,
+                        stop_price=intent.stop_price,
+                        time_in_force=str(intent.time_in_force).upper(),
+                        reduce_only=True,
+                        source="SIGNAL_TEMPLATE",
+                        requested_order_id=intent.order_id,
+                        oco_group_id=intent.oco_group_id,
+                        oco_role=intent.oco_role,
+                    )
+                )
+
+        return protective_orders
+
+    @staticmethod
+    def _oco_role(order: PendingPortfolioOrder) -> str:
+        """
+        Returns the coarse protective role for an OCO-managed pending order.
+        """
+        if order.oco_role is not None:
+            return str(order.oco_role).upper()
+        if str(order.order_type).upper() in {"STOP", "STOP_LIMIT"}:
+            return "STOP"
+        return "TARGET"
+
+    def _preview_pending_fill_price(
+        self,
+        order: PendingPortfolioOrder,
+        bar: pd.Series,
+    ) -> Optional[float]:
+        """
+        Returns the deterministic pre-slippage fill price without mutating state.
+        """
+        temp_order = Order(
+            symbol=order.symbol,
+            quantity=abs(order.quantity),
+            side=order.side,
+            order_type=order.order_type,
+            reason=order.reason,
+            timestamp=bar.name if hasattr(bar, "name") else None,
+            reduce_only=order.reduce_only,
+            limit_price=order.limit_price,
+            stop_price=order.stop_price,
+            time_in_force=order.time_in_force,
+        )
+        order_type = str(temp_order.order_type).upper()
+        handler = self._execution_handlers[order.slot_id]
+        if not handler._validate_order(temp_order, order_type):
+            return None
+        return handler._resolve_bar_fill_price(
+            order=temp_order,
+            order_type=order_type,
+            data_bar=bar,
+            execute_at_close=False,
+        )
+
+    def _intrabar_replay_slice(
+        self,
+        slot_id: int,
+        symbol: str,
+        timestamp: object,
+    ) -> Optional[pd.DataFrame]:
+        """
+        Returns the lower-timeframe slice covering one coarse bar, if complete.
+        """
+        if not self._intrabar_conflict_replay_enabled():
+            return None
+
+        lower_df = self._get_intrabar_conflict_data(slot_id=slot_id, symbol=symbol)
+        coarse_df = self._data_map.get((slot_id, symbol))
+        if lower_df is None or lower_df.empty or coarse_df is None or timestamp not in coarse_df.index:
+            return None
+
+        loc = coarse_df.index.get_loc(timestamp)
+        if not isinstance(loc, int) or loc <= 0:
+            return None
+
+        start_ts = coarse_df.index[loc - 1]
+        end_ts = pd.Timestamp(timestamp)
+        replay_step = self._intrabar_resolution_step()
+        if replay_step is None:
+            return None
+        replay = lower_df.loc[(lower_df.index > start_ts) & (lower_df.index <= end_ts)]
+        if replay.empty:
+            return None
+        expected_index = pd.date_range(
+            start=pd.Timestamp(start_ts) + replay_step,
+            end=end_ts,
+            freq=replay_step,
+        )
+        if expected_index.empty:
+            return None
+        if len(replay.index) != len(expected_index):
+            return None
+        if not replay.index.equals(expected_index):
+            return None
+        return replay
+
+    def _intrabar_resolution_step(self) -> Optional[pd.Timedelta]:
+        """
+        Returns the configured lower-timeframe step as a Timedelta.
+        """
+        timeframe = self.settings.intrabar_resolution_timeframe
+        if timeframe is None:
+            return None
+
+        timeframe_str = str(timeframe).strip().lower()
+        if timeframe_str.endswith("m"):
+            try:
+                minutes = int(timeframe_str[:-1])
+            except ValueError:
+                return None
+            if minutes <= 0:
+                return None
+            return pd.Timedelta(minutes=minutes)
+
+        if timeframe_str.endswith("h"):
+            try:
+                hours = int(timeframe_str[:-1])
+            except ValueError:
+                return None
+            if hours <= 0:
+                return None
+            return pd.Timedelta(hours=hours)
+
+        return None
+
+    def _resolve_oco_winner_on_bar_sequence(
+        self,
+        orders: List[PendingPortfolioOrder],
+        bars: pd.DataFrame,
+    ) -> Optional[PendingPortfolioOrder]:
+        """
+        Resolves the first determinable OCO winner from a chronological bar replay.
+
+        Methodology:
+            Replay proceeds strictly in timestamp order using only bars inside
+            the current coarse-bar interval. If ambiguity remains on a replay
+            bar, the pessimistic policy still applies locally.
+        """
+        for _, replay_bar in bars.iterrows():
+            fillable = [
+                order
+                for order in orders
+                if self._preview_pending_fill_price(order, replay_bar) is not None
+            ]
+            if not fillable:
+                continue
+            if len(fillable) == 1:
+                return fillable[0]
+
+            stops = [order for order in fillable if self._oco_role(order) == "STOP"]
+            if stops:
+                return sorted(stops, key=lambda order: order.id)[0]
+            return sorted(fillable, key=lambda order: order.id)[0]
+
+        return None
+
+    def _select_oco_winner(
+        self,
+        orders: List[PendingPortfolioOrder],
+        bar_map: Dict[str, pd.Series],
+        timestamp: object,
+    ) -> Optional[PendingPortfolioOrder]:
+        """
+        Selects the deterministic winner inside a same-bar OCO conflict.
+
+        Methodology:
+            Until lower-timeframe replay is explicitly wired, the portfolio OMS
+            uses the pessimistic policy. If both protective stop and target are
+            reachable on the same bar, the stop wins.
+        """
+        fillable = [
+            order
+            for order in orders
+            if self._preview_pending_fill_price(order, bar_map[order.id]) is not None
+        ]
+        if not fillable:
+            return None
+        if len(fillable) == 1:
+            return fillable[0]
+
+        replay = self._intrabar_replay_slice(
+            slot_id=fillable[0].slot_id,
+            symbol=fillable[0].symbol,
+            timestamp=timestamp,
+        )
+        if replay is not None:
+            replay_winner = self._resolve_oco_winner_on_bar_sequence(fillable, replay)
+            if replay_winner is not None:
+                return replay_winner
+
+        stops = [order for order in fillable if self._oco_role(order) == "STOP"]
+        if stops:
+            return sorted(stops, key=lambda order: order.id)[0]
+        return sorted(fillable, key=lambda order: order.id)[0]
+
+    @staticmethod
+    def _should_invalidate_target_after_fill(order: PendingPortfolioOrder) -> bool:
+        """
+        Returns True when a fill should retire the preserved target state.
+        """
+        return order.source == "SIGNAL_TEMPLATE" and order.reduce_only
+
+    @staticmethod
+    def _is_expired_pending_order(
+        order: PendingPortfolioOrder,
+        timestamp: object,
+    ) -> bool:
+        """
+        Returns True when a DAY order has crossed into a new calendar day.
+        """
+        if str(order.time_in_force).upper() != "DAY" or order.placed_at is None:
+            return False
+        return pd.Timestamp(timestamp).date() > pd.Timestamp(order.placed_at).date()
+
+    @staticmethod
+    def _invalidate_signal_template_state(
+        order: PendingPortfolioOrder,
+        current_targets: Dict[Tuple[int, str], TargetPosition],
+    ) -> None:
+        """
+        Drops stale target state after an unfilled signal-template order dies.
+        """
+        if order.source != "SIGNAL_TEMPLATE":
+            return
+        current_targets.pop((order.slot_id, order.symbol), None)
+
+    @staticmethod
+    def _reset_strategy_runtime_state(runner: StrategyRunner) -> None:
+        """
+        Resets legacy invested-state flags on all portfolio strategy instances.
+        """
+        runner.reset_runtime_state()
+
     # ── Main event loop ────────────────────────────────────────────────────────
 
     def run(self) -> None:
@@ -528,7 +1070,7 @@ class PortfolioBacktestEngine:
         trade_end_time = parse_hhmm(self.settings.trade_end_time, "trade_end_time")
         eod_close_time = parse_hhmm(self.settings.eod_close_time, "eod_close_time")
 
-        pending_orders: List[Tuple[int, str, str, float, str]] = []
+        order_book = PortfolioOrderBook()
         current_targets: Dict[Tuple[int, str], TargetPosition] = {}
         self._last_bars: Dict[Tuple[int, str], pd.Series] = {}
 
@@ -539,7 +1081,7 @@ class PortfolioBacktestEngine:
 
         for i, ts in enumerate(all_timestamps):
             # Break early only when permanently halted and no pending orders remain
-            if self.trading_halted_permanently and not pending_orders:
+            if self.trading_halted_permanently and not order_book.has_open_orders():
                 break
 
             current_date = all_dates[i]
@@ -552,24 +1094,123 @@ class PortfolioBacktestEngine:
 
             # ── A. Fill pending orders (carry forward through gap bars) ──────────
             # Spread ticks are computed per symbol from history available at ts.
-            still_pending: List[Tuple[int, str, str, float, str]] = []
-            for (slot_id, symbol, side, qty, reason) in pending_orders:
-                df = self._data_map.get((slot_id, symbol))
-                if df is None or ts not in df.index:
-                    still_pending.append((slot_id, symbol, side, qty, reason))
+            still_pending: List[PendingPortfolioOrder] = []
+            executable_now: List[Tuple[PendingPortfolioOrder, pd.Series, float]] = []
+            for order in order_book.active_orders():
+                if self._is_expired_pending_order(order, ts):
+                    order.status = "CANCELLED"
+                    self._invalidate_signal_template_state(order, current_targets)
                     continue
-                if "RISK" not in reason and reason != "EOD_CLOSE" and not session_ok:
-                    still_pending.append((slot_id, symbol, side, qty, reason))
+                if order.eligible_from is not None and ts < order.eligible_from:
+                    still_pending.append(order)
+                    continue
+                df = self._data_map.get((order.slot_id, order.symbol))
+                if df is None or ts not in df.index:
+                    still_pending.append(order)
+                    continue
+                if not order.is_priority and not session_ok:
+                    still_pending.append(order)
+                    continue
+                effective_qty = self._effective_pending_quantity(order)
+                if effective_qty <= 0:
+                    order.status = "CANCELLED"
+                    self._invalidate_signal_template_state(order, current_targets)
                     continue
                 bar = df.loc[ts]
-                self._last_bars[(slot_id, symbol)] = bar  # keep cache current
-                spread_ticks = self._effective_spread_ticks(slot_id, symbol, slot_price_history, ts)
-                self._execute_order(
-                    slot_id, symbol, side, qty, bar,
-                    reason=reason,
-                    effective_spread_ticks=spread_ticks,
+                self._last_bars[(order.slot_id, order.symbol)] = bar  # keep cache current
+                executable_now.append((order, bar, effective_qty))
+
+            grouped_orders: Dict[str, List[Tuple[PendingPortfolioOrder, pd.Series, float]]] = {}
+            group_sequence: List[str] = []
+            for order, bar, effective_qty in executable_now:
+                group_id = order.oco_group_id or order.id
+                if group_id not in grouped_orders:
+                    grouped_orders[group_id] = []
+                    group_sequence.append(group_id)
+                grouped_orders[group_id].append((order, bar, effective_qty))
+
+            for group_id in group_sequence:
+                group = grouped_orders[group_id]
+                if len(group) == 1 or group[0][0].oco_group_id is None:
+                    order, bar, effective_qty = group[0]
+                    spread_ticks = self._effective_spread_ticks(
+                        order.slot_id, order.symbol, slot_price_history, ts
+                    )
+                    if order.status == "SUBMITTED":
+                        order.status = "ACCEPTED"
+                    executed = self._execute_order(
+                        order.slot_id, order.symbol, order.side, effective_qty, bar,
+                        reason=order.reason,
+                        effective_spread_ticks=spread_ticks,
+                        reduce_only=order.reduce_only,
+                        order_type=order.order_type,
+                        limit_price=order.limit_price,
+                        stop_price=order.stop_price,
+                        time_in_force=order.time_in_force,
+                    )
+                    if executed:
+                        order.status = "FILLED"
+                        if self._should_invalidate_target_after_fill(order):
+                            self._invalidate_signal_template_state(order, current_targets)
+                    else:
+                        if str(order.time_in_force).upper() == "IOC":
+                            order.status = "CANCELLED"
+                            self._invalidate_signal_template_state(order, current_targets)
+                        else:
+                            still_pending.append(order)
+                    continue
+
+                bar_map = {order.id: bar for order, bar, _ in group}
+                candidate_orders = [order for order, _, _ in group]
+                winner = self._select_oco_winner(candidate_orders, bar_map, timestamp=ts)
+                if winner is None:
+                    for order, _, _ in group:
+                        if str(order.time_in_force).upper() == "IOC":
+                            order.status = "CANCELLED"
+                            self._invalidate_signal_template_state(order, current_targets)
+                        else:
+                            still_pending.append(order)
+                    continue
+
+                winner_bar = bar_map[winner.id]
+                winner_qty = next(
+                    effective_qty
+                    for order, _, effective_qty in group
+                    if order.id == winner.id
                 )
-            pending_orders = still_pending
+                spread_ticks = self._effective_spread_ticks(
+                    winner.slot_id, winner.symbol, slot_price_history, ts
+                )
+                if winner.status == "SUBMITTED":
+                    winner.status = "ACCEPTED"
+                executed = self._execute_order(
+                    winner.slot_id, winner.symbol, winner.side, winner_qty, winner_bar,
+                    reason=winner.reason,
+                    effective_spread_ticks=spread_ticks,
+                    reduce_only=winner.reduce_only,
+                    order_type=winner.order_type,
+                    limit_price=winner.limit_price,
+                    stop_price=winner.stop_price,
+                    time_in_force=winner.time_in_force,
+                )
+                if executed:
+                    winner.status = "FILLED"
+                    self._invalidate_signal_template_state(winner, current_targets)
+                    for sibling, _, _ in group:
+                        if sibling.id == winner.id:
+                            continue
+                        sibling.status = "CANCELLED"
+                        self._invalidate_signal_template_state(sibling, current_targets)
+                else:
+                    if str(winner.time_in_force).upper() == "IOC":
+                        winner.status = "CANCELLED"
+                        self._invalidate_signal_template_state(winner, current_targets)
+                    else:
+                        still_pending.append(winner)
+                    for sibling, _, _ in group:
+                        if sibling.id != winner.id:
+                            still_pending.append(sibling)
+            order_book.replace_active_orders(still_pending)
 
             # ── B. Mark-to-market ────────────────────────────────────────────────
             prices = {
@@ -588,6 +1229,8 @@ class PortfolioBacktestEngine:
 
             # ── D. Halt handling: liquidate and skip strategy logic ───────────────
             if self.trading_halted_today or self.trading_halted_permanently:
+                order_book.cancel_where(lambda order: not order.is_priority)
+                current_targets.clear()
                 for (slot_id, symbol), qty in list(self.book.positions.items()):
                     if qty != 0:
                         df = self._data_map.get((slot_id, symbol))
@@ -601,6 +1244,7 @@ class PortfolioBacktestEngine:
                                 reason="RISK_LIQ",
                                 effective_spread_ticks=spread_ticks,
                             )
+                self._reset_strategy_runtime_state(runner)
                 self.book.mark_to_market(prices, specs)
                 self.book.record_snapshot(ts, instrument_specs=specs)
                 continue
@@ -615,7 +1259,23 @@ class PortfolioBacktestEngine:
                 for (sid, sym), df in self._data_map.items()
                 if ts in df.index
             }
-            signals = runner.collect_signals(bar_map, ts) if session_ok else []
+            signals = (
+                runner.collect_signals(
+                    bar_map,
+                    ts,
+                    current_positions=dict(self.book.positions),
+                )
+                if session_ok
+                else []
+            )
+            signal_templates = {
+                (signal.slot_id, signal.symbol): signal
+                for signal in signals
+            }
+            replacement_keys = self._replacement_keys(
+                order_book.active_orders(),
+                signal_templates,
+            )
 
             # ── G. Compute target positions via vol-targeting ────────────────────
             if signals:
@@ -646,27 +1306,65 @@ class PortfolioBacktestEngine:
             target_list = list(current_targets.values())
 
             # ── H. Compute order deltas -> queue for t+1 ─────────────────────────
-            orders = self._compute_orders(target_list, pending_orders)
-            pending_orders.extend(orders)
+            orders = self._compute_orders(
+                target_list,
+                order_book.active_orders(),
+                signal_templates=signal_templates,
+                replacement_keys=replacement_keys,
+            )
+            orders.extend(self._build_protective_orders(signal_templates))
+            next_eligible_ts = self._next_eligible_timestamp(all_timestamps, i)
+            if replacement_keys:
+                order_book.cancel_where(
+                    lambda order: (
+                        (order.slot_id, order.symbol) in replacement_keys
+                        and order.owns_resting_execution_state
+                    )
+                )
+            order_book.submit_many(orders, placed_at=ts, eligible_from=next_eligible_ts)
 
             # ── I. Time-based forced EOD close ────────────────────────────────────
             if self._should_force_eod_close(ts_dt, current_date, eod_close_time):
-                # 1. Execute outstanding pending orders at market-on-close
-                still_pending = []
-                for (slot_id, symbol, side, qty, reason) in pending_orders:
-                    bar = self._last_bars.get((slot_id, symbol))
+                # 1. Execute only already-pending market orders at market-on-close.
+                #    Fresh bar[t] orders are cancelled so the t+1 contract holds.
+                for order in order_book.pull_all():
+                    if not self._is_eod_eligible_pending_order(order, ts):
+                        order.status = "CANCELLED"
+                        self._invalidate_signal_template_state(order, current_targets)
+                        continue
+                    if order.order_type != "MARKET":
+                        order.status = "CANCELLED"
+                        self._invalidate_signal_template_state(order, current_targets)
+                        continue
+                    bar = self._last_bars.get((order.slot_id, order.symbol))
                     if bar is not None:
+                        effective_qty = self._effective_pending_quantity(order)
+                        if effective_qty <= 0:
+                            order.status = "CANCELLED"
+                            self._invalidate_signal_template_state(order, current_targets)
+                            continue
                         spread_ticks = self._effective_spread_ticks(
-                            slot_id, symbol, slot_price_history, ts
+                            order.slot_id, order.symbol, slot_price_history, ts
                         )
-                        self._execute_order(
-                            slot_id, symbol, side, qty, bar,
-                            execute_at_close=True, reason=reason,
+                        executed = self._execute_order(
+                            order.slot_id, order.symbol, order.side, effective_qty, bar,
+                            execute_at_close=True, reason=order.reason,
                             effective_spread_ticks=spread_ticks,
+                            reduce_only=order.reduce_only,
+                            order_type=order.order_type,
+                            limit_price=order.limit_price,
+                            stop_price=order.stop_price,
+                            time_in_force=order.time_in_force,
                         )
+                        if executed:
+                            order.status = "FILLED"
+                        else:
+                            order.status = "CANCELLED"
+                            self._invalidate_signal_template_state(order, current_targets)
                     else:
-                        still_pending.append((slot_id, symbol, side, qty, reason))
-                pending_orders = still_pending
+                        order.status = "CANCELLED"
+                        self._invalidate_signal_template_state(order, current_targets)
+                order_book.replace_active_orders([])
 
                 # 2. Force-liquidate ALL open positions using last-available bar
                 #    (not ts — prevents silent skip on gap-bar symbols)
@@ -679,11 +1377,7 @@ class PortfolioBacktestEngine:
                 current_targets.clear()
 
                 # 5. Reset strategy invested-state flags
-                for instance in runner._instances.values():
-                    if hasattr(instance, "_invested"):
-                        instance._invested = False
-                    if hasattr(instance, "_position_side"):
-                        instance._position_side = None
+                self._reset_strategy_runtime_state(runner)
                 self._eod_closed_dates.add(current_date)
 
             # ── J. Snapshot ───────────────────────────────────────────────────────

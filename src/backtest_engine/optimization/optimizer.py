@@ -10,8 +10,8 @@ from typing import Any, Dict, Optional, Type
 import numpy as np
 import pandas as pd
 
-from ..engine import BacktestEngine
-from ..settings import BacktestSettings
+from ..config import BacktestSettings
+from ..single_asset import BacktestEngine
 from .objective import objective_score
 from .optuna_runtime import (
     HiddenPrints,

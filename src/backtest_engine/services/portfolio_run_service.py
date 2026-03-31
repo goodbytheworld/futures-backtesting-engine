@@ -159,7 +159,7 @@ def run_portfolio_backtest(
         max_contracts_per_slot, rebalance_frequency) and slot-level
         expected_duty_cycle values come from the YAML. Shared execution
         settings (commission_rate, spread_ticks, spread_mode, initial_capital,
-        kill-switch thresholds) are read from BacktestSettings (settings.py).
+        kill-switch thresholds) are read from BacktestSettings in the config package.
 
     Args:
         config_path: Path to the YAML config file (absolute or project-relative).
@@ -176,7 +176,7 @@ def run_portfolio_backtest(
         StrategySlot,
     )
     from src.strategies.registry import get_strategy_class_by_name
-    from src.backtest_engine.settings import BacktestSettings
+    from src.backtest_engine.config import BacktestSettings
     from src.data.data_lake import DataLake
 
     project_root = Path(__file__).parent.parent.parent.parent

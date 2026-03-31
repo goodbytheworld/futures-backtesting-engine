@@ -1,8 +1,8 @@
 import pytest
 import pandas as pd
 from datetime import datetime, timedelta
-from src.backtest_engine.engine import BacktestEngine
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
+from src.backtest_engine.single_asset import BacktestEngine
 from src.strategies.sma_pullback import SmaPullbackStrategy
 
 @pytest.fixture

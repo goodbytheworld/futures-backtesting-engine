@@ -29,7 +29,7 @@ from src.backtest_engine.optimization.wfv_optimizer import WalkForwardOptimizer
 from src.backtest_engine.services.batch_models import BatchScenario, WfoBatchResult
 from src.backtest_engine.services.batch_plot_service import show_wfo_batch_heatmap
 from src.backtest_engine.services.run_helpers import validate_cache_requirements_or_exit
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
 from src.strategies.registry import load_strategy_by_id, resolve_strategy_id
 
 
@@ -89,8 +89,8 @@ def _render_progress_bar(
     start_time: float,
 ) -> None:
     """
-    Legacy shim kept so that the single-scenario fast path still compiles.
-    The multi-scenario path now uses tqdm directly.
+    Fallback progress-bar helper for direct CLI output.
+    The multi-scenario path uses tqdm directly.
     """
     elapsed = time.monotonic() - start_time
     avg_sec = elapsed / current if current > 0 else 0.0

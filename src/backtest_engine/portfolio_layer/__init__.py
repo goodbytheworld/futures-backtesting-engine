@@ -8,6 +8,7 @@ All implementation lives in subpackages; this file exports the stable interfaces
 # Domain
 from .domain.contracts import PortfolioConfig, StrategySlot
 from .domain.signals import StrategySignal, TargetPosition
+from .domain.orders import PendingPortfolioOrder
 from .domain.policies import RebalancePolicy, ExecutionPolicy
 
 # Engine (primary entry point)
@@ -15,6 +16,7 @@ from .engine.engine import PortfolioBacktestEngine
 
 # Execution
 from .execution.portfolio_book import PortfolioBook
+from .execution.order_book import PortfolioOrderBook
 from .execution.strategy_runner import StrategyRunner
 
 # Allocation
@@ -29,12 +31,14 @@ __all__ = [
     "StrategySlot",
     "StrategySignal",
     "TargetPosition",
+    "PendingPortfolioOrder",
     "RebalancePolicy",
     "ExecutionPolicy",
     # Engine
     "PortfolioBacktestEngine",
     # Execution
     "PortfolioBook",
+    "PortfolioOrderBook",
     "StrategyRunner",
     # Allocation
     "Allocator",

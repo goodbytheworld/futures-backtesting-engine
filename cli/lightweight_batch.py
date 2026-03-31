@@ -85,7 +85,7 @@ def dispatch_lightweight_batch_command(argv: Sequence[str]) -> bool:
     parser = build_lightweight_batch_parser(command_name)
     args = parser.parse_args(list(argv[1:]))
 
-    from src.backtest_engine.settings import BacktestSettings
+    from src.backtest_engine.config import BacktestSettings
 
     settings = BacktestSettings()
     strategy_names = [args.strategy] if args.strategy else list(args.strategies or [])

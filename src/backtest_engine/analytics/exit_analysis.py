@@ -43,7 +43,7 @@ def enrich_trades_with_exit_analytics(
     multiplier_cache: Dict[str, float] = {}
 
     try:
-        from src.backtest_engine.settings import BacktestSettings
+        from src.backtest_engine.config import BacktestSettings
         settings = BacktestSettings()
     except Exception:
         settings = None

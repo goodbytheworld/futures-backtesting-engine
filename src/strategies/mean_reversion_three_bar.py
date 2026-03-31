@@ -3,12 +3,11 @@
 """
 3-Bar mean reversion setup (CME / single-asset backtest).
 
-IMPORTANT — execution model:
-    The original discretionary rule set uses limit entries (long: close minus a
-    small ATR fraction; short: close plus the same). This repository's single-
-    asset engine exercises those signals with MARKET orders only (next-bar open
-    fills per engine contract). Treat results as an aggressive fill
-    approximation until limit-order execution exists in the engine.
+Execution model:
+    Entries are placed as DAY limit orders for the next bar. Long entries use
+    close minus a small ATR fraction; short entries use close plus the same.
+    If the limit is not reached intraday, the entry expires and the strategy
+    resets to flat intent.
 
 Rules (signal evaluated at bar close; orders fill at the following bar open):
     Long:
@@ -42,6 +41,7 @@ from src.strategies.filters import (
     ShockFilter,
     apply_wfo_dataclass_overrides,
     gate_trade_direction,
+    wilder_atr,
 )
 
 
@@ -67,6 +67,8 @@ class ThreeBarMeanReversionConfig:
     shock_max_gap_atr: float = 1.0
     shock_max_range_atr: float = 2.5
     shock_max_close_change_atr: float = 1.75
+    entry_atr_window: int = 14
+    entry_limit_atr_frac: float = 0.10
 
 
 class ThreeBarMeanReversionStrategy(BaseStrategy):
@@ -119,8 +121,11 @@ class ThreeBarMeanReversionStrategy(BaseStrategy):
                 max_close_change_atr=cfg.shock_max_close_change_atr,
             )
 
+        entry_atr = wilder_atr(high=high, low=low, close=close, span=cfg.entry_atr_window)
         self._long_sig = long_sig
         self._short_sig = short_sig
+        self._entry_limit_long = close - entry_atr * float(cfg.entry_limit_atr_frac)
+        self._entry_limit_short = close + entry_atr * float(cfg.entry_limit_atr_frac)
 
         n = len(close)
         ts_list = close.index.to_list()
@@ -135,8 +140,10 @@ class ThreeBarMeanReversionStrategy(BaseStrategy):
         self._bar_dates = dates_np
 
         self._invested = False
+        self._awaiting_entry = False
         self._position_side: Optional[str] = None
         self._exit_session_date: Optional[date] = None
+        self._entry_signal_date: Optional[date] = None
 
         n_long = int(long_sig.sum())
         n_short = int(short_sig.sum())
@@ -154,11 +161,21 @@ class ThreeBarMeanReversionStrategy(BaseStrategy):
             return []
 
         orders: List[Order] = []
+        current_qty = float(self.get_position())
+        current_date = self._bar_dates[pos]
+
+        if self._awaiting_entry:
+            if current_qty != 0.0:
+                self._awaiting_entry = False
+                self._invested = True
+                self._position_side = "LONG" if current_qty > 0 else "SHORT"
+                self._exit_session_date = current_date
+            elif self._entry_signal_date is not None and current_date != self._entry_signal_date:
+                self._reset_entry_state()
 
         if self._invested:
-            cur_d = self._bar_dates[pos]
             eod = bool(self._is_eod.loc[ts])
-            if cur_d == self._exit_session_date and eod:
+            if current_date == self._exit_session_date and eod:
                 if self._position_side == "LONG":
                     orders.append(
                         self.market_order("SELL", self.settings.fixed_qty, reason="EOD_FLAT")
@@ -168,6 +185,9 @@ class ThreeBarMeanReversionStrategy(BaseStrategy):
                         self.market_order("BUY", self.settings.fixed_qty, reason="EOD_FLAT")
                     )
                 self._reset_position_state()
+            return orders
+
+        if self._awaiting_entry:
             return orders
 
         long_ok = bool(self._long_sig.loc[ts])
@@ -186,31 +206,57 @@ class ThreeBarMeanReversionStrategy(BaseStrategy):
         if pos + 1 >= len(self._bar_dates):
             return orders
 
-        self._exit_session_date = self._bar_dates[pos + 1]
-
         if long_ok:
-            self._invested = True
+            limit_price = self._entry_limit_long.loc[ts]
+            if pd.isna(limit_price):
+                return orders
+            self._awaiting_entry = True
             self._position_side = "LONG"
+            self._entry_signal_date = current_date
             orders.append(
-                self.market_order("BUY", self.settings.fixed_qty, reason="MR3_LONG")
+                self.limit_order(
+                    "BUY",
+                    self.settings.fixed_qty,
+                    limit_price=float(limit_price),
+                    reason="MR3_LONG",
+                    time_in_force="DAY",
+                )
             )
         elif short_ok:
-            self._invested = True
+            limit_price = self._entry_limit_short.loc[ts]
+            if pd.isna(limit_price):
+                return orders
+            self._awaiting_entry = True
             self._position_side = "SHORT"
+            self._entry_signal_date = current_date
             orders.append(
-                self.market_order("SELL", self.settings.fixed_qty, reason="MR3_SHORT")
+                self.limit_order(
+                    "SELL",
+                    self.settings.fixed_qty,
+                    limit_price=float(limit_price),
+                    reason="MR3_SHORT",
+                    time_in_force="DAY",
+                )
             )
 
         return orders
 
+    def _reset_entry_state(self) -> None:
+        self._awaiting_entry = False
+        self._position_side = None
+        self._entry_signal_date = None
+
     def _reset_position_state(self) -> None:
         self._invested = False
+        self._awaiting_entry = False
         self._position_side = None
         self._exit_session_date = None
+        self._entry_signal_date = None
 
     @classmethod
     def get_search_space(cls) -> Dict[str, Any]:
         return {
             "tbar_regime_window": (30, 90, 10),
             "tbar_extreme_lookback": (3, 7, 1),
+            "tbar_entry_limit_atr_frac": (0.05, 0.20, 0.05),
         }

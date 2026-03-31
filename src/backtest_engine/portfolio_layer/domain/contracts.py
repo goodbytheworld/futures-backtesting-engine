@@ -8,7 +8,7 @@ facing YAML configuration only.  No computation or I/O here.
 
 Execution settings (commission_rate, spread_ticks, spread_mode) and kill-switch
 thresholds (max_daily_loss, max_drawdown_pct, max_account_floor) live in
-BacktestSettings (settings.py) to avoid duplication.
+BacktestSettings from the config package to avoid duplication.
 """
 
 from __future__ import annotations

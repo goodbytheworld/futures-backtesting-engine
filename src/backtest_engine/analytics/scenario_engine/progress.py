@@ -63,8 +63,9 @@ def get_progress_stages(job_type: JobType | str) -> Tuple[ProgressStage, ...]:
     Returns the canonical progress stages for one scenario job family.
 
     Methodology:
-        Plan A intentionally reuses one normalized stage flow for all current
-        job types so queue metadata widens before workers branch in complexity.
+        The current implementation reuses one normalized stage flow for all
+        supported job types so queue metadata stays stable as workers branch in
+        complexity.
     """
 
     _ = JobType(job_type)

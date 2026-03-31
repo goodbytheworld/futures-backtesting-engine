@@ -15,11 +15,11 @@ from enum import Enum
 
 
 def _default_commission_rate() -> float:
-    from src.backtest_engine.settings import BacktestSettings
+    from src.backtest_engine.config import BacktestSettings
     return BacktestSettings().commission_rate
 
 def _default_spread_ticks() -> int:
-    from src.backtest_engine.settings import BacktestSettings
+    from src.backtest_engine.config import BacktestSettings
     return BacktestSettings().spread_ticks
 
 

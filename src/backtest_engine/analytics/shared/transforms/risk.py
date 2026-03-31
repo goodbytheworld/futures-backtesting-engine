@@ -293,9 +293,12 @@ def compute_rolling_sharpe(
         window=window_days, min_periods=max(window_days // 2, 5)
     ).std()
 
-    # Step 4: Sharpe — clip std at 1e-8 to prevent inf on flat periods
-    safe_std: pd.Series = rolling_std.clip(lower=1e-8)
-    return (rolling_mean / safe_std) * ann_factor
+    # Step 4: Sharpe — near-zero rolling std should produce no point, not a
+    # synthetic +/-100k spike on flat windows. Keep those windows as NaN so the
+    # UI mini-chart simply skips them until meaningful variation appears.
+    safe_std: pd.Series = rolling_std.where(rolling_std > 1e-8)
+    rolling_sharpe = (rolling_mean / safe_std) * ann_factor
+    return rolling_sharpe.replace([np.inf, -np.inf], np.nan)
 
 def build_risk_profile(
     label: str,
@@ -406,4 +409,3 @@ def build_risk_profile(
         summary=summary,
         stress_results=stress_results,
     )
-

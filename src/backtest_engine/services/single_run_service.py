@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.backtest_engine.engine import BacktestEngine
+from src.backtest_engine.single_asset import BacktestEngine
 from src.backtest_engine.services.run_helpers import load_strategy_and_validate_cache
 
 

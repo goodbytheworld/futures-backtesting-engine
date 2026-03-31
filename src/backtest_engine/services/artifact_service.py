@@ -38,7 +38,7 @@ REQUIRED_PORTFOLIO_ARTIFACTS = ("history.parquet", "trades.parquet", "manifest.j
 def _result_bundle_cache_ttl_seconds() -> float:
     """Loads the interactive result-bundle cache TTL from shared settings."""
     try:
-        from src.backtest_engine.settings import BacktestSettings
+        from src.backtest_engine.config import BacktestSettings
 
         return float(BacktestSettings().terminal_ui.terminal_result_bundle_cache_ttl_seconds)
     except Exception:

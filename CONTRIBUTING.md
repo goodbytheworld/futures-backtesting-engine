@@ -70,7 +70,7 @@ python run.py --dashboard
 
 There are two different engine entry points and they should not be conflated:
 
-- `src/backtest_engine/engine.py`
+- `src/backtest_engine/single_asset/engine.py`
   - `BacktestEngine`
   - Single-asset bar-by-bar event loop
   - Owns one portfolio object, one strategy instance, and one instrument stream

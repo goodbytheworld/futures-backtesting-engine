@@ -10,7 +10,7 @@ from datetime import datetime
 import pandas as pd
 from ib_insync import IB, Future, util
 
-from ..backtest_engine.settings import BacktestSettings as Settings
+from ..backtest_engine.config import BacktestSettings as Settings
 from .ib_fetcher_contracts import IBFetcherContractsMixin
 from .ib_fetcher_history import IBFetcherHistoryMixin
 from .ib_fetcher_storage import IBFetcherStorageMixin

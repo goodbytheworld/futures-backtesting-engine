@@ -8,7 +8,7 @@ import pandas as pd
 
 from src.backtest_engine.runtime.terminal_ui.constants import TITLE_EXIT_VOL_REGIME
 from src.backtest_engine.services.artifact_service import ResultBundle
-from src.backtest_engine.settings import BacktestSettings
+from src.backtest_engine.config import BacktestSettings
 
 from .helpers import make_empty_payload, filter_trades_for_strategy
 

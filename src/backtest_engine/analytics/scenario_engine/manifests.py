@@ -17,13 +17,13 @@ def resolve_artifact_manifest_version() -> str:
     Resolves the active scenario artifact manifest version from settings.
 
     Methodology:
-        Plan A added a dedicated scenario settings namespace, so manifest
-        builders should honor that setting instead of silently hardcoding the
-        version at emit time.
+        The scenario settings namespace owns this version so manifest builders
+        should honor that setting instead of silently hardcoding the version at
+        emit time.
     """
 
     try:
-        from src.backtest_engine.settings import BacktestSettings
+        from src.backtest_engine.config import BacktestSettings
 
         return str(BacktestSettings().scenario_engine.scenario_artifact_version)
     except Exception:
