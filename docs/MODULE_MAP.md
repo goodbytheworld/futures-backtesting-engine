@@ -17,6 +17,7 @@ Quick reference for contributors deciding where code belongs.
 | Module | Purpose |
 |---|---|
 | `__init__.py` | `Order`, `Fill`, `Trade`, `ExecutionHandler` |
+| `cost_model.py` | canonical order-type execution cost helpers |
 | `order_book.py` | resting-order registry for single-asset execution |
 | `spread_model.py` | deterministic spread tick model |
 | `time_controls.py` | trading-session and EOD helpers |

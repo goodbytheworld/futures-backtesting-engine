@@ -117,12 +117,29 @@ Stop-limit orders are supported deterministically with conservative bar logic:
   touches, the simulator uses the conservative assumption and requires the limit
   condition to be explicitly satisfied by the bar range
 
+## Default Execution Cost Assumptions
+
+The repository uses a simple retail-style default execution cost profile:
+
+- `MARKET` and `STOP` use the configured spread model
+- `LIMIT` and `STOP_LIMIT` default to zero spread slippage unless explicitly
+  overridden
+- all order types fall back to the shared base `commission_rate` unless
+  `commission_rate_by_order_type` provides an exact override
+
+This default stays intentionally simple:
+
+- no bid/ask replay
+- no maker rebates
+- no queue-priority uncertainty
+
 ## Gap-Aware Rules
 
 Gap-aware behavior is mandatory for stop and limit realism:
 
 - long stop at `95`, next open at `90` -> fill at `90` adjusted by slippage
-- buy limit at `100`, next open at `98` -> fill at `98` adjusted by slippage
+- buy limit at `100`, next open at `98` -> fill at `98` with no default spread
+  slippage
 
 The simulator never gives a synthetic fill at the stale trigger price when the
 market has already moved through it by the next available open.

@@ -1,8 +1,16 @@
-from typing import List, Dict, Optional, Any
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
+
 import pandas as pd
+
+from .cost_model import (
+    estimate_order_cost,
+    estimate_round_trip_cost,
+    resolve_execution_cost_profile,
+    resolve_spread_ticks,
+)
 
 @dataclass
 class Order:
@@ -74,11 +82,16 @@ class ExecutionHandler:
     Handles order execution tracking and simulates fills into Round-trip Trades.
 
     Methodology:
-    Fill prices are adjusted by a deterministic spread model.  The number of
+    Fill prices are adjusted by the shared execution cost model. The number of
     spread ticks applied per fill is supplied by the calling engine via the
     `effective_spread_ticks` parameter, which is computed from
-    `spread_model.compute_spread_ticks()` before each execution.  When
-    `effective_spread_ticks` is not provided the handler reads
+    `spread_model.compute_spread_ticks()` before each execution.  The shared
+    cost model then applies the order-type profile:
+
+    - MARKET / STOP use the spread model by default
+    - LIMIT / STOP_LIMIT default to zero spread slippage unless explicitly overridden
+
+    When `effective_spread_ticks` is not provided the handler reads
     `settings.spread_ticks` directly (appropriate for static mode and tests).
     No random number generator is used anywhere in this class.
     """
@@ -108,10 +121,12 @@ class ExecutionHandler:
         Simulates order execution with deterministic spread and commission constraints.
         
         Methodology:
-        Derives an execution price adjusted by a deterministic spread model.
-        The spread tick count is either supplied externally by the engine (adaptive
-        mode) or read from settings.spread_ticks (static mode).  No random sampling
-        is performed; the same inputs always produce the same output.
+        Derives an execution price adjusted by the shared execution cost model.
+        The spread tick count is either supplied externally by the engine
+        (adaptive mode) or read from settings.spread_ticks (static mode). The
+        order-type profile then decides whether that spread applies to the
+        fill. No random sampling is performed; the same inputs always produce
+        the same output.
 
         Fill-price convention:
             BUY  fill: price + spread_ticks * tick_size
@@ -204,23 +219,17 @@ class ExecutionHandler:
         """
         Resolves deterministic spread ticks with optional order-type multipliers.
         """
-        base_ticks = (
-            int(effective_spread_ticks)
-            if effective_spread_ticks is not None
-            else int(getattr(self.settings, "spread_ticks", 1))
+        return resolve_spread_ticks(
+            settings=self.settings,
+            order_type=order_type,
+            effective_spread_ticks=effective_spread_ticks,
         )
-        multipliers = getattr(self.settings, "spread_tick_multipliers_by_order_type", {}) or {}
-        multiplier = float(multipliers.get(order_type, 1.0))
-        return max(0, int(round(base_ticks * multiplier)))
 
     def _resolve_commission_rate(self, order_type: str) -> float:
         """
         Resolves the per-contract commission rate for the order type.
         """
-        overrides = getattr(self.settings, "commission_rate_by_order_type", {}) or {}
-        if order_type in overrides:
-            return float(overrides[order_type])
-        return float(getattr(self.settings, "commission_rate", 0.0))
+        return resolve_execution_cost_profile(self.settings, order_type).commission_rate
 
     def _resolve_bar_fill_price(
         self,

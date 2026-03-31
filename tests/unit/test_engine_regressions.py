@@ -12,6 +12,10 @@ from src.backtest_engine.services.artifact_service import ResultBundle
 from src.backtest_engine.analytics.shared.transforms.stress import _build_trade_cost_series
 from src.backtest_engine.analytics.exit_analysis import enrich_trades_with_exit_analytics
 from src.backtest_engine.analytics.exporter import save_backtest_results
+from src.backtest_engine.execution.cost_model import (
+    estimate_round_trip_cost,
+    resolve_spread_ticks,
+)
 from src.backtest_engine.execution import ExecutionHandler, Order
 from src.backtest_engine.portfolio_layer.reporting.results import save_portfolio_results
 from src.backtest_engine.config import BacktestSettings
@@ -233,6 +237,49 @@ def test_sell_stop_gap_fills_at_open_not_stop() -> None:
     assert fill.fill_price == 90.0
 
 
+def test_limit_orders_default_to_zero_spread_slippage() -> None:
+    """Default LIMIT fills should not pay spread slippage."""
+    handler = ExecutionHandler(StubSettings(spread_ticks=3))
+    bar = _ohlc_bar("2024-01-01 09:30:00", open_price=100.0, high_price=101.0, low_price=99.0, close_price=100.0)
+
+    fill = handler.execute_order(
+        Order(
+            symbol="ES",
+            quantity=1,
+            side="BUY",
+            order_type="LIMIT",
+            limit_price=100.0,
+        ),
+        bar,
+    )
+
+    assert fill is not None
+    assert fill.fill_price == 100.0
+    assert fill.slippage == 0.0
+
+
+def test_stop_limit_orders_default_to_zero_spread_slippage() -> None:
+    """Default STOP_LIMIT fills should follow the limit-style spread profile."""
+    handler = ExecutionHandler(StubSettings(spread_ticks=3))
+    bar = _ohlc_bar("2024-01-01 09:30:00", open_price=100.0, high_price=106.0, low_price=101.0, close_price=105.0)
+
+    fill = handler.execute_order(
+        Order(
+            symbol="ES",
+            quantity=1,
+            side="BUY",
+            order_type="STOP_LIMIT",
+            stop_price=105.0,
+            limit_price=101.0,
+        ),
+        bar,
+    )
+
+    assert fill is not None
+    assert fill.fill_price == 101.0
+    assert fill.slippage == 0.0
+
+
 def test_untriggered_ioc_order_is_cancelled() -> None:
     """IOC resting orders must cancel when the first eligible bar does not fill them."""
     handler = ExecutionHandler(StubSettings(spread_ticks=0))
@@ -318,6 +365,22 @@ def test_per_order_type_cost_overrides_are_applied() -> None:
     assert fill is not None
     assert fill.slippage == 0.5
     assert fill.commission == 7.0
+
+
+def test_shared_cost_model_treats_stop_limit_as_limit_style_by_default() -> None:
+    """STOP_LIMIT should use the same default spread profile as LIMIT orders."""
+    settings = StubSettings(spread_ticks=2)
+    estimate = estimate_round_trip_cost(
+        symbol="ES",
+        settings=settings,
+        entry_order_type="STOP_LIMIT",
+        exit_order_type="MARKET",
+    )
+
+    assert estimate.entry.slippage_cash == 0.0
+    assert estimate.exit.slippage_cash == 25.0
+    assert estimate.total_cash == 30.0
+    assert resolve_spread_ticks(settings, "STOP_LIMIT", effective_spread_ticks=2) == 0
 
 
 def test_adaptive_spread_widens_in_high_vol() -> None:

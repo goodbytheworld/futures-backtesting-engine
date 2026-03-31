@@ -11,6 +11,7 @@ from src.backtest_engine.optimization.wfv_optimizer import WalkForwardOptimizer
 from src.backtest_engine.optimization.wfv_optimizer import WFVReport
 from src.backtest_engine.optimization.wfv_optimizer import FoldResult
 from src.backtest_engine.config import BacktestSettings
+from src.strategies.base import BaseStrategy
 
 
 def test_purged_fold_generator_keeps_test_window_intact_when_embargo_is_set() -> None:
@@ -144,6 +145,96 @@ class _DummySettings:
         return _DummySettings(**merged)
 
 
+def _build_wfo_execution_data() -> pd.DataFrame:
+    """
+    Builds a minimal deterministic dataset for WFO execution-cost regressions.
+    """
+
+    index = pd.date_range("2024-01-01 09:30:00", periods=3, freq="1h")
+    return pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 103.0],
+            "high": [100.5, 106.0, 103.5],
+            "low": [99.5, 99.0, 102.5],
+            "close": [100.0, 102.0, 103.0],
+            "volume": [1_000.0, 1_000.0, 1_000.0],
+        },
+        index=index,
+    )
+
+
+def _build_wfo_settings() -> BacktestSettings:
+    """
+    Returns shared settings for WFO execution-cost regressions.
+    """
+
+    settings = BacktestSettings(
+        default_symbol="TEST",
+        initial_capital=10_000.0,
+        commission_rate=2.5,
+        spread_ticks=2,
+        spread_mode="static",
+        use_trading_hours=False,
+        wfo_prune_min_trades=1,
+    )
+    settings.instrument_specs = {
+        "TEST": {
+            "tick_size": 0.25,
+            "multiplier": 50.0,
+            "margin_ratio": 0.10,
+        }
+    }
+    return settings
+
+
+class _WFOLimitEntryStrategy(BaseStrategy):
+    """
+    Emits one LIMIT entry and one MARKET exit for WFO execution-path tests.
+    """
+
+    def __init__(self, engine: object) -> None:
+        super().__init__(engine)
+        self.entry_sent = False
+        self.exit_sent = False
+
+    def on_bar(self, bar: pd.Series) -> list:
+        if not self.entry_sent:
+            self.entry_sent = True
+            return [self.limit_order("BUY", 1, limit_price=100.0, reason="SIGNAL")]
+        if not self.exit_sent and not self.is_flat():
+            self.exit_sent = True
+            return [self.market_order("SELL", 1, reason="EXIT")]
+        return []
+
+
+class _WFOStopLimitEntryStrategy(BaseStrategy):
+    """
+    Emits one STOP_LIMIT entry and one MARKET exit for WFO execution-path tests.
+    """
+
+    def __init__(self, engine: object) -> None:
+        super().__init__(engine)
+        self.entry_sent = False
+        self.exit_sent = False
+
+    def on_bar(self, bar: pd.Series) -> list:
+        if not self.entry_sent:
+            self.entry_sent = True
+            return [
+                self.stop_limit_order(
+                    "BUY",
+                    1,
+                    stop_price=105.0,
+                    limit_price=101.0,
+                    reason="SIGNAL",
+                )
+            ]
+        if not self.exit_sent and not self.is_flat():
+            self.exit_sent = True
+            return [self.market_order("SELL", 1, reason="EXIT")]
+        return []
+
+
 def test_optimizer_normalizes_max_drawdown_to_percent(monkeypatch) -> None:
     """
     MaxDD input should end up in percent regardless of source convention.
@@ -181,6 +272,52 @@ def test_optimizer_normalizes_max_drawdown_to_percent(monkeypatch) -> None:
     result = optimizer._run_strategy(strategy_class=object, params={})
 
     assert result["stats"]["max_drawdown"] == -25.0
+
+
+def test_wfo_optimizer_limit_entry_uses_shared_limit_cost_profile() -> None:
+    """
+    WFO engine runs must inherit the shared LIMIT execution-cost semantics.
+
+    Methodology:
+        OptunaOptimizer._run_strategy is the concrete engine path used by
+        optimize_on_slice/evaluate_on_slice, so this regression proves the WFO
+        workflow inherits the same order-type friction behavior as normal
+        single-backtest execution.
+    """
+
+    optimizer = OptunaOptimizer(settings=_build_wfo_settings())
+    result = optimizer._run_strategy(
+        strategy_class=_WFOLimitEntryStrategy,
+        params={},
+        data=_build_wfo_execution_data(),
+    )
+
+    trades = result["engine"].execution.trades
+
+    assert len(trades) == 1
+    assert trades[0].entry_price == 100.0
+    assert trades[0].slippage == 25.0
+    assert trades[0].commission == 5.0
+
+
+def test_wfo_optimizer_stop_limit_entry_uses_shared_stop_limit_cost_profile() -> None:
+    """
+    WFO engine runs must treat STOP_LIMIT as limit-like by default.
+    """
+
+    optimizer = OptunaOptimizer(settings=_build_wfo_settings())
+    result = optimizer._run_strategy(
+        strategy_class=_WFOStopLimitEntryStrategy,
+        params={},
+        data=_build_wfo_execution_data(),
+    )
+
+    trades = result["engine"].execution.trades
+
+    assert len(trades) == 1
+    assert trades[0].entry_price == 101.0
+    assert trades[0].slippage == 25.0
+    assert trades[0].commission == 5.0
 
 
 def test_purged_fold_generator_rejects_zero_fold_size() -> None:

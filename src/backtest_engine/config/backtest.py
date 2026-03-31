@@ -52,19 +52,21 @@ class BacktestSettings(BaseSettings):
         description="RQ queue name for terminal-driven async scenario jobs.",
     )
 
-    # Primary instrument
+    # Default symbol for single-asset runs
     default_symbol: str = "ES"
 
-    # Bar settings
+    # Base bar configuration for single-asset mode
     low_interval: str = "30m"
     bar_type: str = "time"
     bar_size: float = 0.0
 
-    # Portfolio and execution
+    # Shared capital setting for portfolio and single-asset modes
     initial_capital: float = 1_000_000.0
+    # Single-asset execution and cost defaults
     risk_free_rate: float = 0.02
     commission_rate: float = 2.5
     fixed_qty: int = 1
+    # Default margin ratio used when symbol spec has no margin_ratio
     portfolio_margin_ratio: float = 0.10
 
     # Deterministic spread model
@@ -74,17 +76,20 @@ class BacktestSettings(BaseSettings):
     spread_step_multiplier: float = 1.5
     spread_vol_lookback: int = 20
     spread_vol_baseline_lookback: int = 100
-    spread_tick_multipliers_by_order_type: dict = Field(
+    spread_tick_multipliers_by_order_type: dict[str, float] = Field(
         default_factory=dict,
         description=(
-            "Optional per-order-type multipliers applied to spread ticks. "
+            "Optional exact per-order-type spread multipliers. "
+            "When omitted, shared retail defaults apply: "
+            "MARKET/STOP=1.0 and LIMIT/STOP_LIMIT=0.0. "        #commision multipliers are here.
             "Keys use MARKET/LIMIT/STOP/STOP_LIMIT."
         ),
     )
-    commission_rate_by_order_type: dict = Field(
+    commission_rate_by_order_type: dict[str, float] = Field(
         default_factory=dict,
         description=(
-            "Optional per-order-type commission overrides. "
+            "Optional exact per-order-type commission overrides. "
+            "When omitted, all order types fall back to commission_rate. "
             "Keys use MARKET/LIMIT/STOP/STOP_LIMIT."
         ),
     )
@@ -119,7 +124,7 @@ class BacktestSettings(BaseSettings):
     hl_lambda_min: Optional[float] = 1e-4
     hl_max_cap: Optional[float] = 500.0
 
-    # Volatility regime analytics defaults
+    # Default windows/thresholds for volatility-regime analytics only
     vol_regime_window_default: int = 50
     vol_history_window_default: int = 500
     vol_min_pct_default: float = 0.20
