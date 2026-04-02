@@ -68,6 +68,9 @@ Quick reference for contributors deciding where code belongs.
 | `routes_operations.py` | scenario and operational endpoints |
 | `exit_charts/` | topic-split exit-analysis chart builders |
 | `static/charts_shared.js` | shared chart loading and resize utilities |
+| `static/charts_renderers_*.js` | grouped terminal chart renderer implementations |
+| `static/charts.js` | chart request dispatcher and UI wiring |
+| `static/terminal.css` | stylesheet manifest for terminal UI style modules |
 
 ### `src/backtest_engine/optimization/`
 

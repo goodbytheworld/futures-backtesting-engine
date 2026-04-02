@@ -1,0 +1,164 @@
+.terminal-shell {
+    display: grid;
+    grid-template-columns: var(--sidebar-width) 5px minmax(0, 1fr);
+    height: 100vh;
+    column-gap: 0;
+    row-gap: var(--panel-gap);
+    padding: 12px;
+}
+
+.terminal-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--panel-gap);
+    min-height: 0;
+    padding: 12px;
+    overflow: auto;
+}
+
+.terminal-main {
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+    margin-left: var(--panel-gap);
+}
+
+.terminal-top-zone {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--panel-gap);
+    height: calc(100% - var(--bottom-reserved));
+    overflow: hidden;
+}
+
+.terminal-top-ribbon {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: var(--panel-gap);
+}
+
+.terminal-main-stage {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: 1fr;
+    overflow: hidden;
+}
+
+.terminal-main-stage > .terminal-panel {
+    height: 100%;
+}
+
+.terminal-panel--primary {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 12px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.terminal-panel--with-mini {
+    grid-template-rows: auto minmax(0, 1fr) 160px;
+}
+
+.terminal-panel--scroll {
+    overflow: auto;
+    min-height: 0;
+}
+
+.terminal-bottom {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--bottom-height);
+    z-index: 20;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 10px;
+    overflow: hidden;
+    padding: 10px 12px 12px;
+    border: 1px solid var(--border);
+    background: rgba(17, 17, 17, 0.96);
+    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.terminal-tabs {
+    display: flex;
+    gap: 8px;
+    overflow: auto;
+}
+
+.terminal-panel__stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+}
+
+.terminal-panel__stack--fill {
+    height: 100%;
+}
+
+.terminal-chart--fill {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.terminal-split {
+    display: grid;
+    gap: var(--panel-gap);
+    min-height: 0;
+}
+
+.terminal-split--equal {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.terminal-split--fill {
+    flex: 1 1 auto;
+    min-height: 0;
+    align-items: stretch;
+}
+
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.metric-grid--compact {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.terminal-job-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.terminal-main > .terminal-top-zone {
+    margin-bottom: 0;
+}
+
+@media (max-width: 1280px) {
+    :root {
+        --sidebar-width: 280px;
+    }
+
+    .terminal-top-ribbon {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .metric-grid,
+    .metric-grid--compact {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .terminal-job-grid,
+    .terminal-split--equal {
+        grid-template-columns: 1fr;
+    }
+}

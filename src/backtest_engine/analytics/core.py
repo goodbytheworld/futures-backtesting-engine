@@ -78,6 +78,7 @@ class PerformanceMetrics:
         equity: pd.Series = portfolio_history["total_value"]
         returns: pd.Series = equity.pct_change(fill_method=None).dropna()
 
+        total_pnl:    float = float(equity.iloc[-1] - equity.iloc[0])
         total_return: float = calc_total_return(equity)
         years:        float = calc_years(equity)
         cagr:         float = calc_cagr(total_return, years)
@@ -91,6 +92,7 @@ class PerformanceMetrics:
         t_stat, p_val = calc_return_stats(returns)
 
         metrics: Dict[str, float] = {
+            "Total PnL":     total_pnl,
             "Total Return":  total_return,
             "CAGR":          cagr,
             "Volatility":    vol,

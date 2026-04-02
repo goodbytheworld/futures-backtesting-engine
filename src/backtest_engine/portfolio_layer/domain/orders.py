@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 from uuid import uuid4
 
+from src.backtest_engine.execution.brackets import ACTIVATION_POLICY_IMMEDIATE
+
 
 @dataclass
 class PendingPortfolioOrder:
@@ -40,6 +42,11 @@ class PendingPortfolioOrder:
     requested_order_id: Optional[str] = None
     oco_group_id: Optional[str] = None
     oco_role: Optional[str] = None
+    parent_order_id: Optional[str] = None
+    activation_policy: str = ACTIVATION_POLICY_IMMEDIATE
+    activation_status: str = "ACTIVE"
+    activated_at: Optional[object] = None
+    activated_by_fill_phase: Optional[str] = None
     placed_at: Optional[object] = None
     eligible_from: Optional[object] = None
     status: str = "NEW"
@@ -67,3 +74,8 @@ class PendingPortfolioOrder:
             resting order resolves or is explicitly replaced in a later phase.
         """
         return self.source == "SIGNAL_TEMPLATE" and str(self.order_type).upper() != "MARKET"
+
+    @property
+    def is_ready_for_execution(self) -> bool:
+        """Returns True when the order is armed for actual execution attempts."""
+        return str(self.activation_status).upper() != "PENDING_PARENT_FILL"

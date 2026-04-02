@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 from pathlib import Path
 from typing import Any, Optional
 
@@ -38,18 +39,17 @@ _TODO_PATH = _PROJECT_ROOT / "TODO.md"
 
 
 def _build_static_asset_version() -> str:
-    """Builds a cache-busting token from current static asset mtimes."""
-    static_files = (
-        _STATIC_DIR / "terminal.css",
-        _STATIC_DIR / "terminal.js",
-        _STATIC_DIR / "charts.js",
-        _STATIC_DIR / "operations.js",
-    )
-    existing_files = [path for path in static_files if path.exists()]
-    if not existing_files:
+    """Builds a cache-busting token from all current terminal UI static assets."""
+    static_files = sorted(path for path in _STATIC_DIR.rglob("*") if path.is_file())
+    if not static_files:
         return "1"
-    latest_mtime_ns = max(path.stat().st_mtime_ns for path in existing_files)
-    return str(latest_mtime_ns)
+    fingerprint = hashlib.sha1()
+    for path in static_files:
+        fingerprint.update(path.relative_to(_STATIC_DIR).as_posix().encode("utf-8"))
+        fingerprint.update(b"\0")
+        fingerprint.update(path.read_bytes())
+        fingerprint.update(b"\0")
+    return fingerprint.hexdigest()[:16]
 
 
 def _coerce_float(value: Optional[str], fallback: float) -> float:

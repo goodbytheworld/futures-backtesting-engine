@@ -1,165 +1,156 @@
-# QUANT FRAMEWORK MCP (Model Context Protocol)
+# QUANT FRAMEWORK MCP
 
-**Role**: You are a Senior Quantitative Architect.
-**Objective**: When asked to "Bootstrap a Backtester/Bot/Model", uses THIS framework. DO NOT reinvent the wheel. Use these patterns.
+Objective: provide a universal architecture framework for quantitative systems.
 
-## 1. Project Topology (The Standard Layout)
-All quantitative projects must follow this `src`-based layout to ensure import safety and clean packaging.
+Use this document when bootstrapping or restructuring:
+
+- backtesting engines
+- broker or exchange adapters
+- execution simulators
+- risk engines
+- portfolio analytics platforms
+- research stacks that need a path toward production
+
+This is not a one-layout religion. The correct design depends on project scale,
+team size, deployment model, and runtime criticality.
+
+## 1. Core architecture principles
+
+- Separate business logic from delivery mechanisms.
+- Separate data acquisition from data normalization and storage.
+- Separate strategy or model logic from execution and risk controls.
+- Separate orchestration from the engines that do the work.
+- Separate analytics and artifact generation from the UI that renders them.
+- Prefer explicit bounded contexts over giant utility folders.
+
+## 2. Common bounded contexts
+
+Most serious quant systems contain some version of these areas:
+
+- `config`
+  Settings, environment loading, typed runtime configuration.
+- `data`
+  Vendor connectors, normalization, cache, storage, validation.
+- `domain`
+  Core financial logic, models, strategies, contracts, policies.
+- `execution` or `simulation`
+  Order semantics, fills, slippage, commissions, session controls.
+- `services`
+  Orchestration use cases that connect adapters and engines.
+- `analytics`
+  Metrics, reports, artifacts, post-run analysis, diagnostics.
+- `runtime`
+  CLI, API, UI, workers, schedulers, notebooks, dashboards.
+- `tests`
+  Unit, regression, integration, scenario, and contract tests.
+
+Not every project needs all of them on day one, but mixing them together
+creates scaling problems later.
+
+## 3. Project scale matters
+
+Use the matching framework file in `dev_context/BASE/`:
+
+- `PROJECT_FRAMEWORK_SMALL.md`
+- `PROJECT_FRAMEWORK_MEDIUM.md`
+- `PROJECT_FRAMEWORK_MASSIVE.md`
+
+Do not force a massive-project architecture onto a small prototype. Do not keep
+a giant fund-grade platform inside a flat 12-file layout.
+
+## 4. Standard repository minimum
+
+Every serious project should have, at minimum:
+
+- `README.md`
+- one architecture reference
+- one quick module map or package map
+- a typed configuration layer
+- tests
+- one clear runtime entry strategy
+- one documented place where artifacts or outputs are written
+
+If LLMs are expected to work inside the project, add:
+
+- `docs/agents.md` or equivalent repository context
+- `dev_context/README.md`
+- a small number of focused MCP-style documents, not a pile of overlapping lore
+
+## 5. Recommended dependency flow
+
+Healthy default direction:
 
 ```text
-project_root/
-├── .env                    # Secrets (API Keys) - NEVER committed
-├── pyproject.toml          # Dependency Management (Poetry/UV standard)
-├── README.md               # Technical Documentation
-├── run.py                  # Single Entry Point (CLI)
-├── dev_context/           # LLM Context & Rules
-│   ├── AGENTS.md           # Current State & Tasks
-│   └── QUANT_FRAMEWORK_MCP.md
-├── src/
-│   └── project_name/       # Main Package
-│       ├── __init__.py
-│       ├── settings.py     # Pydantic Configuration (Single Source of Truth)
-│       ├── data_lake.py    # Data Access Layer (Parquet Caching)
-│       ├── data_fetcher.py # External API Connector
-│       ├── engine.py       # Core Math/Logic (Pure, no I/O)
-│       ├── execution.py    # (Optional) Live Trading/Orders
-│       ├── analytics.py    # Logging & Statistics (No UI)
-│       └── visualizer.py   # Plotting & Dashboard (Strict Separation)
-└── tests/
-    └── test_core.py        # Pytest Suite
+runtime -> services -> domain / engines -> analytics / storage
 ```
 
-## 2. Dependency Management (`pyproject.toml`)
-Use modern standards (Modern Python).
+Allowed support dependencies:
 
-```toml
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+- domain code may depend on config and typed contracts
+- services may depend on data, engines, analytics, and storage
+- runtime may depend on services and presentation helpers
 
-[project]
-name = "quant_engine"
-version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = [
-    "numpy>=1.26.0",
-    "pandas>=2.2.0",
-    "scipy>=1.12.0",
-    "pydantic>=2.7.0",
-    "pydantic-settings>=2.2.0",
-    "ccxt>=4.2.0",
-    "matplotlib>=3.8.0",
-    "seaborn>=0.13.0",
-    "colorlog>=6.8.0",
-    "python-dotenv>=1.0.0"
-]
+Avoid the reverse:
 
-[tool.mypy]
-ignore_missing_imports = true
-```
+- engines should not depend on HTTP or template code
+- data loaders should not depend on chart renderers
+- strategy code should not depend on CLI parsing
 
-## 3. Configuration Pattern (`settings.py`)
-**Rule**: No Magic Numbers. Use `pydantic-settings` for type-safe validation.
+## 6. How to place new code
 
-```python
-from pathlib import Path
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+Put code where its primary responsibility lives:
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="QUANT_",
-        env_file=".env",
-        extra="ignore"
-    )
+- new execution semantics -> `execution` or engine packages
+- new workflow assembly -> `services`
+- new broker or vendor adapter -> `data`
+- new model or strategy logic -> `domain` or `strategies`
+- new artifact schema or metric -> `analytics`
+- new route, page, dashboard, or API handler -> `runtime`
 
-    # Infrastructure
-    cache_dir: Path = Path("data/cache")
-    
-    # Financial Params
-    capital: float = Field(default=100_000.0, gt=0)
-    risk_free_rate: float = 0.02
-    
-    # Strategy Params
-    symbol: str = "BTCUSDT"
-    lookback_window: int = Field(default=365, ge=100)
+If a new module feels equally at home in three places, the boundaries are
+probably unclear and need to be cleaned up before adding more code.
 
-    def get_cache_path(self) -> Path:
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        return self.cache_dir
+## 7. Cross-project architecture examples
 
-```
+Example A: event-driven backtester
 
-## 4. Data Layer Pattern (`data_lake.py`)
-**Rule**: Never fetch from API if efficient local cache exists. Use Parquet.
+- `data/`
+- `strategies/`
+- `execution/`
+- `services/`
+- `analytics/`
+- `runtime/`
 
-**Decoupling Principle**:
-*   Do NOT mix Crypto (CCXT) and TradFi (IB) in one class. They have different rate limits and logic.
-*   Use `CryptoFetcher` vs `FiFetcher`.
+Example B: risk analytics platform
 
-```python
-import pandas as pd
-from datetime import datetime, timedelta
-from .settings import Settings
-from .data_fetcher import DataFetcher # External class wrapping CCXT
+- `market_data/`
+- `features/`
+- `regime_models/`
+- `risk_models/`
+- `validation/`
+- `reporting/`
+- `api/`
 
-class DataLake:
-    def __init__(self, settings: Settings):
-        self.settings = settings
-        self.fetcher = DataFetcher()
+Example C: live execution bot
 
-    def load_or_fetch(self, symbol: str, lookback_days: int = 1000) -> pd.DataFrame:
-        """
-        Smart-Loader:
-        1. Check Parquet Cache.
-        2. If missing/stale -> Fetch Delta from API.
-        3. Merge & Save.
-        """
-        file_path = self.settings.get_cache_path() / f"{symbol}.parquet"
-        
-        if file_path.exists():
-            df = pd.read_parquet(file_path)
-            last_date = df.index[-1]
-            
-            # If stale (>4 hours old), fetch update
-            if datetime.utcnow() - last_date > timedelta(hours=4):
-                new_data = self.fetcher.fetch_ohlcv(symbol, start_date=last_date)
-                if not new_data.empty:
-                    df = pd.concat([df, new_data])
-                    df = df[~df.index.duplicated(keep='last')]
-                    df.to_parquet(file_path)
-            return df
-            
-        else:
-            # Cold Start
-            df = self.fetcher.fetch_ohlcv(symbol, days=lookback_days)
-            df.to_parquet(file_path)
-            return df
-```
+- `adapters/`
+- `signals/`
+- `risk_controls/`
+- `order_router/`
+- `monitoring/`
+- `runtime/`
 
-## 5. Logging Standard (`logger`)
-**Rule**: Structured, Colored, No Prints.
+See `dev_context/README.md` for the local mapping of the current repository.
 
-```python
-import logging
-import sys
-import colorlog
+## 8. Universal warning
 
-def setup_logger(name="QuantCore"):
-    handler = colorlog.StreamHandler(sys.stdout)
-    handler.setFormatter(colorlog.ColoredFormatter(
-        '%(log_color)s%(asctime)s | %(levelname)-8s | %(message)s',
-        datefmt='%H:%M:%S',
-        log_colors={
-            'DEBUG': 'cyan',
-            'INFO': 'green',
-            'WARNING': 'yellow',
-            'ERROR': 'red',
-            'CRITICAL': 'red,bg_white',
-        }
-    ))
-    logger = logging.getLogger(name)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    return logger
-```
+Do not generalize a specialized project into a universal rule.
+
+Examples:
+
+- A backtesting engine and a hedge-fund risk platform should not share the same
+  folder complexity.
+- A one-strategy research prototype does not need portfolio scheduling,
+  scenario queues, and UI runtimes.
+- A production risk engine may need much stricter interface, observability, and
+  release controls than a research notebook converted into a package.

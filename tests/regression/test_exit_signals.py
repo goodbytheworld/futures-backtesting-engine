@@ -105,6 +105,28 @@ class _FlatStopEntry:
         )]
 
 
+class _PreInvestedPendingEntry:
+    """Simulates a legacy strategy that flips invested state before first fill."""
+
+    def __init__(self, engine):
+        self._invested = True
+        self._position_side = "LONG"
+
+    def on_bar(self, bar):
+        from src.backtest_engine.execution import Order
+        return [Order(
+            symbol="ES",
+            quantity=1,
+            side="BUY",
+            order_type="LIMIT",
+            limit_price=3995.0,
+            reason="ENTRY_PRESET",
+            time_in_force="DAY",
+            reduce_only=False,
+            timestamp=None,
+        )]
+
+
 class _BracketExit:
     """Minimal strategy that emits a stop/target protective bracket."""
     def __init__(self, engine):
@@ -205,6 +227,30 @@ class _UsesBaseStrategyPosition(BaseStrategy):
             self._position_side = "LONG"
             return [Order(symbol="ES", quantity=1, side="SELL", order_type="MARKET", reason="SYNC_OK")]
         return []
+
+
+class _OppositeSideExit:
+    """Emits an explicit opposite-side exit from an already-open long."""
+
+    def __init__(self, engine):
+        self._invested = False
+        self._position_side = None
+
+    def on_bar(self, bar):
+        from src.backtest_engine.execution import Order
+        return [Order(symbol="ES", quantity=1, side="SELL", order_type="MARKET", reason="EXIT_NOW")]
+
+
+class _OppositeSideReverse:
+    """Emits an opposite-side order after flipping legacy state to the new side."""
+
+    def __init__(self, engine):
+        self._invested = True
+        self._position_side = "SHORT"
+
+    def on_bar(self, bar):
+        from src.backtest_engine.execution import Order
+        return [Order(symbol="ES", quantity=1, side="SELL", order_type="MARKET", reason="REVERSE_NOW")]
 
 
 def _make_config(strategy_class):
@@ -365,7 +411,47 @@ class TestExitSignalMapping:
 
         assert len(signals) == 1
         assert signals[0].reason == "SYNC_OK"
-        assert signals[0].direction == 1
+        assert signals[0].direction == 0
+        assert signals[0].bridge_intent == "CLOSE"
+
+    def test_explicit_opposite_side_order_from_live_long_maps_to_close_intent(self):
+        settings = BacktestSettings()
+        df = _make_data()
+        config = _make_config(_OppositeSideExit)
+        data_map = {(0, "ES"): df}
+
+        runner = StrategyRunner(config, data_map, settings)
+        ts = df.index[0]
+        bar_map = {(0, "ES"): df.loc[ts]}
+        signals = runner.collect_signals(
+            bar_map,
+            ts,
+            current_positions={(0, "ES"): 2.0},
+        )
+
+        assert len(signals) == 1
+        assert signals[0].direction == 0
+        assert signals[0].bridge_intent == "CLOSE"
+        assert signals[0].requested_side == "SELL"
+
+    def test_explicit_opposite_side_order_can_request_reversal_when_state_flips(self):
+        settings = BacktestSettings()
+        df = _make_data()
+        config = _make_config(_OppositeSideReverse)
+        data_map = {(0, "ES"): df}
+
+        runner = StrategyRunner(config, data_map, settings)
+        ts = df.index[0]
+        bar_map = {(0, "ES"): df.loc[ts]}
+        signals = runner.collect_signals(
+            bar_map,
+            ts,
+            current_positions={(0, "ES"): 2.0},
+        )
+
+        assert len(signals) == 1
+        assert signals[0].direction == -1
+        assert signals[0].bridge_intent == "REVERSE"
 
     def test_multiple_same_bar_entry_intents_log_warning_and_use_last_order(self, caplog):
         settings = BacktestSettings()
@@ -390,7 +476,7 @@ class TestExitSignalMapping:
         assert "ENTRY_B" in caplog.text
         assert "selected_order" in caplog.text
 
-    def test_invested_with_invalid_side_logs_warning_and_returns_zero(self, caplog):
+    def test_invested_with_invalid_side_logs_warning_and_uses_pending_entry_direction(self, caplog):
         settings = BacktestSettings()
         df = _make_data()
         config = _make_config(_BrokenInvestedSide)
@@ -407,7 +493,28 @@ class TestExitSignalMapping:
             signals = runner.collect_signals(bar_map, ts)
 
         assert len(signals) == 1
-        assert signals[0].direction == 0
-        assert "inconsistent invested state" in caplog.text
+        assert signals[0].direction == 1
+        assert "conflicting legacy invested flags" in caplog.text
         assert "BROKEN_STATE" in caplog.text
         assert "_position_side='BROKEN'" in caplog.text
+
+    def test_pending_entry_bar_does_not_warn_when_legacy_state_matches_entry_intent(self, caplog):
+        settings = BacktestSettings()
+        df = _make_data()
+        config = _make_config(_PreInvestedPendingEntry)
+        data_map = {(0, "ES"): df}
+
+        runner = StrategyRunner(config, data_map, settings)
+        ts = df.index[0]
+        bar_map = {(0, "ES"): df.loc[ts]}
+
+        with caplog.at_level(
+            logging.WARNING,
+            logger="src.backtest_engine.portfolio_layer.execution.strategy_runner",
+        ):
+            signals = runner.collect_signals(bar_map, ts)
+
+        assert len(signals) == 1
+        assert signals[0].direction == 1
+        assert signals[0].bridge_intent == "OPEN"
+        assert caplog.text == ""

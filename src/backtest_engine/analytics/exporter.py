@@ -14,7 +14,7 @@ Workflow (quant standard):
 
 Files written per run:
     results/history.parquet   — portfolio equity curve (indexed by timestamp)
-    results/trades.parquet    — closed trade log
+    results/trades.parquet    — closed trade log (empty table when no trades close)
     results/benchmark.parquet — buy-and-hold price series (optional)
     results/report.txt        — verbatim terminal report string
     results/metrics.json      — KPIs as a JSON object
@@ -65,9 +65,23 @@ def save_backtest_results(
         Path to the results directory where files were written.
     """
     from src.backtest_engine.analytics.exit_analysis import enrich_trades_with_exit_analytics
-    
+
     _settings = settings or BacktestSettings()
     results_dir: Path = _settings.get_results_path()
+    trade_columns = [
+        "symbol",
+        "entry_price",
+        "exit_price",
+        "quantity",
+        "commission",
+        "slippage",
+        "entry_time",
+        "exit_time",
+        "direction",
+        "gross_pnl",
+        "pnl",
+        "exit_reason",
+    ]
 
     # Extract dynamic vol regimes if strategy is available
     vol_params = {}
@@ -85,8 +99,8 @@ def save_backtest_results(
         history.to_parquet(results_dir / "history.parquet")
 
     # Trades
+    rows: List[Dict[str, Any]] = []
     if trades:
-        rows = []
         for t in trades:
             if isinstance(t, dict):
                 rows.append(t)
@@ -115,15 +129,15 @@ def save_backtest_results(
                     "exit_reason": getattr(t, "exit_reason", ""),
                 })
 
-        trades_df = pd.DataFrame(rows)
-        if not trades_df.empty and data_map:
-            trades_df = enrich_trades_with_exit_analytics(
-                trades_df,
-                data_map,
-                **vol_params,
-            )
+    trades_df = pd.DataFrame(rows, columns=trade_columns)
+    if not trades_df.empty and data_map:
+        trades_df = enrich_trades_with_exit_analytics(
+            trades_df,
+            data_map,
+            **vol_params,
+        )
 
-        trades_df.to_parquet(results_dir / "trades.parquet", index=False)
+    trades_df.to_parquet(results_dir / "trades.parquet", index=False)
 
     # Benchmark
     if benchmark is not None:
@@ -138,11 +152,14 @@ def save_backtest_results(
     )
 
     # Save dashboard reconstruction context into a manifest artifact.
-    saved_artifacts: List[str] = ["report.txt", "metrics.json", "manifest.json"]
+    saved_artifacts: List[str] = [
+        "report.txt",
+        "metrics.json",
+        "manifest.json",
+        "trades.parquet",
+    ]
     if not history.empty:
         saved_artifacts.insert(0, "history.parquet")
-    if trades:
-        saved_artifacts.append("trades.parquet")
     if benchmark is not None:
         saved_artifacts.append("benchmark.parquet")
 

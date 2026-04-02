@@ -12,6 +12,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
+from src.backtest_engine.execution.brackets import ACTIVATION_POLICY_IMMEDIATE
+
+
+BRIDGE_INTENT_OPEN = "OPEN"
+BRIDGE_INTENT_HOLD = "HOLD"
+BRIDGE_INTENT_CLOSE = "CLOSE"
+BRIDGE_INTENT_REVERSE = "REVERSE"
+
 
 @dataclass(frozen=True)
 class RequestedOrderIntent:
@@ -37,6 +45,8 @@ class RequestedOrderIntent:
     reduce_only: bool = False
     oco_group_id: Optional[str] = None
     oco_role: Optional[str] = None
+    parent_order_id: Optional[str] = None
+    activation_policy: str = ACTIVATION_POLICY_IMMEDIATE
 
 
 @dataclass
@@ -70,9 +80,12 @@ class StrategySignal:
         requested_stop_price: Requested stop price, if any.
         requested_time_in_force: Requested time-in-force ('DAY', 'GTC', 'IOC').
         requested_reduce_only: Raw reduce-only flag from the strategy order.
+        bridge_intent: Bridge-level position effect inferred from the live
+            position plus emitted raw orders. Supported values are OPEN, HOLD,
+            CLOSE, and REVERSE.
         requested_orders: Full raw order set emitted on this bar. The legacy
-            single-order fields above are preserved for compatibility and still
-            point to the last emitted order.
+            single-order fields above are preserved for compatibility and point
+            to the inferred primary order for the bar.
     """
     slot_id: int
     symbol: str
@@ -89,6 +102,7 @@ class StrategySignal:
     requested_stop_price: Optional[float] = None
     requested_time_in_force: Optional[str] = None
     requested_reduce_only: bool = False
+    bridge_intent: str = BRIDGE_INTENT_OPEN
     requested_orders: Tuple[RequestedOrderIntent, ...] = field(default_factory=tuple)
 
 

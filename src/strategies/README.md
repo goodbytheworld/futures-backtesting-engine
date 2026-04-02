@@ -2,6 +2,11 @@
 
 This package contains concrete trading strategies and the registry that exposes them to the rest of the system.
 
+Each production strategy should be self-contained in its own file under
+`src/strategies/`. Shared code belongs in `src/strategies/filters/` only when
+it is a pure indicator, mask builder, or other stateless helper. Avoid
+cross-strategy execution helpers or "family" loaders that hide runtime logic.
+
 ## Current Strategies
 
 Registered strategy IDs currently include:
@@ -11,6 +16,12 @@ Registered strategy IDs currently include:
 - `three_bar_mr`
 - `rfp_fractal`
 - `channel_breakout`
+- `bollinger_squeeze_breakout`
+- `keltner_tightening_breakout`
+- `diamond_breakout`
+- `wyckoff_breakout_aggressive`
+- `wyckoff_breakout_moderate`
+- `wyckoff_breakout_conservative`
 
 `registry.py` is the canonical source of truth. The README is a contributor aid only.
 
@@ -69,22 +80,26 @@ The portfolio engine is still target-driven, but it now preserves enough raw int
 
 Current bridge behavior:
 
-- if a strategy is already invested, portfolio `direction` still comes from legacy `_invested` / `_position_side`
-- if a strategy is flat but emits a non-reduce-only `LIMIT` / `STOP` / `STOP_LIMIT` entry, the bridge infers provisional direction from that raw order side
-- `reduce_only=True` orders are excluded from that fallback so protective exits do not request fresh exposure
+- the live portfolio position is the source of truth for bridge state, but raw non-`reduce_only` order intent is still preserved
+- if a strategy is flat and emits a non-`reduce_only` `LIMIT` / `STOP` / `STOP_LIMIT` entry, the bridge infers provisional direction from that raw order side
+- if a strategy is already invested and emits an opposite-side non-`reduce_only` order, the bridge maps it to explicit `CLOSE` or `REVERSE` intent instead of blindly reusing the live position sign
+- `reduce_only=True` orders are excluded from entry-direction fallback so protective exits do not request fresh exposure
+- same-bar entry plus protective bracket metadata is preserved and forwarded into the portfolio OMS as parent/child intent
 
 Practical implication:
 
 - flat pending-entry strategies such as `three_bar_mr` and `channel_breakout` can trade in portfolio mode without pre-setting `_invested=True`
+- explicit exit/reversal strategies can now close or reverse live portfolio positions without local bridge workarounds
 
 ## Adding A Strategy
 
 1. Create a new module in `src/strategies/`.
-2. Implement a config object if the strategy has parameters.
-3. Precompute indicators in `__init__`.
-4. Implement `on_bar()` using O(1) lookups.
-5. Implement `get_search_space()` if WFO support is needed.
-6. Register the strategy in `registry.py`.
+2. Keep the strategy's config and execution state in that same file.
+3. Use `src/strategies/filters/` only for stateless helpers.
+4. Precompute indicators in `__init__`.
+5. Implement `on_bar()` using O(1) lookups.
+6. Implement `get_search_space()` in the same module if WFO support is needed.
+7. Register the strategy in `registry.py`.
 
 ## Optimization Guidance
 

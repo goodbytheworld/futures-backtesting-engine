@@ -61,7 +61,7 @@ class BacktestSettings(BaseSettings):
     bar_size: float = 0.0
 
     # Shared capital setting for portfolio and single-asset modes
-    initial_capital: float = 1_000_000.0
+    initial_capital: float = 100_000.0
     # Single-asset execution and cost defaults
     risk_free_rate: float = 0.02
     commission_rate: float = 2.5
@@ -251,7 +251,12 @@ class BacktestSettings(BaseSettings):
             "RTY": {"tick_size": 0.10, "multiplier": 50.0},
             "ZC": {"tick_size": 0.25, "multiplier": 50.0},
             "ZB": {"tick_size": 0.03125, "multiplier": 1000.0},
+            "6A": {"tick_size": 0.00005, "multiplier": 100000.0},
+            "6B": {"tick_size": 0.0001, "multiplier": 62500.0},
+            "6C": {"tick_size": 0.00005, "multiplier": 100000.0},
             "6E": {"tick_size": 0.00005, "multiplier": 125000.0},
+            "6J": {"tick_size": 0.0000005, "multiplier": 12500000.0},
+            "6S": {"tick_size": 0.00005, "multiplier": 125000.0},
         },
         description="Per-instrument tick sizes and dollar multipliers.",
     )

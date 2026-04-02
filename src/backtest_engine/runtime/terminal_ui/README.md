@@ -29,6 +29,10 @@ It should not:
 | `routes_partials.py` | HTML partial routes |
 | `routes_charts.py` | chart payload routes |
 | `routes_operations.py` | stress-testing and operational routes |
+| `static/charts_shared.js` | shared chart helpers and request lifecycle utilities |
+| `static/charts_renderers_*.js` | grouped renderer implementations for chart families |
+| `static/charts.js` | chart dispatcher and DOM wiring for runtime refreshes |
+| `static/terminal.css` | stylesheet manifest that loads terminal UI style modules |
 | `jobs.py` | runtime facade for scenario job infrastructure |
 | `worker_manager.py` | managed local worker lifecycle helpers |
 | `windows_worker.py` | Windows-specific worker helpers |

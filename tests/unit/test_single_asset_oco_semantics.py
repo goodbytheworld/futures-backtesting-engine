@@ -53,6 +53,26 @@ class BracketTargetStrategy(BaseStrategy):
         return []
 
 
+class SameBarStopEntryBracketStrategy(BaseStrategy):
+    """Emits one stop entry plus attached protective bracket on the same bar."""
+
+    def __init__(self, engine) -> None:
+        super().__init__(engine)
+        self._emitted = False
+
+    def on_bar(self, bar) -> list:
+        if self._emitted:
+            return []
+        self._emitted = True
+        self._invested = False
+        self._position_side = None
+        return [
+            self.stop_order("BUY", 1, stop_price=101.0, reason="ENTRY", time_in_force="IOC"),
+            self.stop_order("SELL", 1, stop_price=99.0, reason="SL", reduce_only=True),
+            self.limit_order("SELL", 1, limit_price=105.0, reason="TP", reduce_only=True),
+        ]
+
+
 def _coarse_conflict_data() -> pd.DataFrame:
     index = pd.DatetimeIndex(
         [
@@ -209,3 +229,61 @@ def test_single_engine_incomplete_lower_tf_replay_falls_back_to_stop() -> None:
 
     assert len(engine.execution.trades) == 1
     assert engine.execution.trades[0].exit_reason == "SL"
+
+
+def test_single_engine_unfilled_stop_entry_does_not_arm_reduce_only_child() -> None:
+    """Dormant protective children must not open a new short when parent entry misses."""
+    index = pd.DatetimeIndex(
+        [
+            datetime(2025, 1, 1, 9, 30),
+            datetime(2025, 1, 1, 10, 0),
+            datetime(2025, 1, 1, 10, 30),
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 100.0],
+            "high": [100.0, 100.0, 100.0],
+            "low": [100.0, 94.0, 100.0],
+            "close": [100.0, 95.0, 100.0],
+            "volume": [1.0, 1.0, 1.0],
+        },
+        index=index,
+    )
+
+    engine = BacktestEngine(settings=_settings(), data=data)
+    engine.run(SameBarStopEntryBracketStrategy)
+
+    assert engine.execution.fills == []
+    assert engine.execution.trades == []
+    assert engine.portfolio.positions.get("ES", 0.0) == 0.0
+
+
+def test_single_engine_intrabar_stop_entry_can_activate_stop_child_same_bar() -> None:
+    """An intrabar stop entry must arm its protective stop on the entry bar."""
+    index = pd.DatetimeIndex(
+        [
+            datetime(2025, 1, 1, 9, 30),
+            datetime(2025, 1, 1, 10, 0),
+            datetime(2025, 1, 1, 10, 30),
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 100.0],
+            "high": [100.0, 102.0, 100.0],
+            "low": [100.0, 98.0, 100.0],
+            "close": [100.0, 100.0, 100.0],
+            "volume": [1.0, 1.0, 1.0],
+        },
+        index=index,
+    )
+
+    engine = BacktestEngine(settings=_settings(), data=data)
+    engine.run(SameBarStopEntryBracketStrategy)
+
+    assert len(engine.execution.fills) == 2
+    assert engine.execution.fills[0].order.reason == "ENTRY"
+    assert engine.execution.fills[0].fill_phase == "INTRABAR"
+    assert engine.execution.fills[1].order.reason == "SL"
+    assert engine.portfolio.positions.get("ES", 0.0) == 0.0

@@ -334,6 +334,7 @@ class BacktestEngine:
         self,
         orders: List[Order],
         bars: pd.DataFrame,
+        coarse_timestamp: object,
     ) -> Optional[Order]:
         """
         Resolves the first determinable OCO winner from a chronological replay.
@@ -342,7 +343,11 @@ class BacktestEngine:
             fillable = [
                 order
                 for order in orders
-                if self.execution.preview_fill_price(order, replay_bar) is not None
+                if self._preview_fill_price_for_bar(
+                    order=order,
+                    data_bar=replay_bar,
+                    coarse_timestamp=coarse_timestamp,
+                ) is not None
             ]
             if not fillable:
                 continue
@@ -383,7 +388,11 @@ class BacktestEngine:
         """
         replay = self._intrabar_replay_slice(timestamp=timestamp, symbol=symbol)
         if replay is not None:
-            replay_winner = self._resolve_oco_winner_on_bar_sequence(orders, replay)
+            replay_winner = self._resolve_oco_winner_on_bar_sequence(
+                orders,
+                replay,
+                coarse_timestamp=timestamp,
+            )
             if replay_winner is not None:
                 return replay_winner
         return self._select_pessimistic_oco_winner(orders)
@@ -418,6 +427,64 @@ class BacktestEngine:
         if order.placed_at is None:
             return False
         return pd.Timestamp(order.placed_at) == pd.Timestamp(timestamp)
+
+    def _current_position(self, symbol: str) -> float:
+        """Returns the live signed position for one symbol."""
+        return float(self.portfolio.positions.get(symbol, 0.0))
+
+    @staticmethod
+    def _same_bar_child_execution_allowed(order: Order, coarse_timestamp: object) -> bool:
+        """
+        Returns True when an attached child may execute on the current coarse bar.
+        """
+        if order.parent_order_id is None or order.activated_at is None:
+            return True
+        if pd.Timestamp(order.activated_at) != pd.Timestamp(coarse_timestamp):
+            return True
+        if str(order.activated_by_fill_phase or "OPEN").upper() != "INTRABAR":
+            return True
+        return (
+            str(order.oco_role or "").upper() == "STOP"
+            or str(order.order_type).upper() in {"STOP", "STOP_LIMIT"}
+        )
+
+    def _preview_fill_price_for_bar(
+        self,
+        order: Order,
+        data_bar: pd.Series,
+        coarse_timestamp: object,
+    ) -> Optional[float]:
+        """Previews one order against the current bar with live OMS guards."""
+        if not self._same_bar_child_execution_allowed(order, coarse_timestamp):
+            return None
+        return self.execution.preview_fill_price(
+            order,
+            data_bar,
+            current_position=self._current_position(order.symbol),
+        )
+
+    def _attempt_fill_and_apply(
+        self,
+        order: Order,
+        data_bar: pd.Series,
+        current_prices: Dict[str, float],
+        effective_spread_ticks: Optional[int],
+        coarse_timestamp: object,
+    ) -> Optional[Fill]:
+        """
+        Executes one order and immediately applies the fill to portfolio state.
+        """
+        if not self._same_bar_child_execution_allowed(order, coarse_timestamp):
+            return None
+        fill = self.execution.execute_order(
+            order,
+            data_bar,
+            effective_spread_ticks=effective_spread_ticks,
+            current_position=self._current_position(order.symbol),
+        )
+        if fill is not None:
+            self.portfolio.update(fill, current_prices)
+        return fill
 
     # ── Main event loop ────────────────────────────────────────────────────────
 
@@ -542,24 +609,30 @@ class BacktestEngine:
             )
 
             order_book.cancel_expired_day_orders(current_date)
-            fills = order_book.process_active_orders(
-                attempt_fill=lambda order: self.execution.execute_order(
-                    order, bar, effective_spread_ticks=spread_ticks
+            order_book.process_active_orders(
+                attempt_fill=lambda order: self._attempt_fill_and_apply(
+                    order=order,
+                    data_bar=bar,
+                    current_prices=current_prices,
+                    effective_spread_ticks=spread_ticks,
+                    coarse_timestamp=timestamp,
                 ),
                 can_attempt=lambda order: self._is_priority_order(order) or (
                     not self.trading_halted_today and session_ok
                 ),
                 # Preview is non-mutating so OCO groups can pick one winner
                 # without prematurely filling or rejecting sibling orders.
-                preview_fill=lambda order: self.execution.preview_fill_price(order, bar),
+                preview_fill=lambda order: self._preview_fill_price_for_bar(
+                    order=order,
+                    data_bar=bar,
+                    coarse_timestamp=timestamp,
+                ),
                 select_oco_winner=lambda orders: self._select_oco_winner(
                     orders,
                     timestamp=timestamp,
                     symbol=symbol,
                 ),
             )
-            for fill in fills:
-                self.portfolio.update(fill, current_prices)
 
             # B. Mark-to-market + risk checks
             self.portfolio.update(None, current_prices)
@@ -600,6 +673,7 @@ class BacktestEngine:
                         bar,
                         execute_at_close=True,
                         effective_spread_ticks=spread_ticks,
+                        current_position=self._current_position(order.symbol),
                     )
                     if fill:
                         self.portfolio.update(fill, current_prices)
@@ -611,6 +685,7 @@ class BacktestEngine:
                         bar,
                         execute_at_close=True,
                         effective_spread_ticks=spread_ticks,
+                        current_position=self._current_position(order.symbol),
                     )
                     if fill:
                         self.portfolio.update(fill, current_prices)

@@ -112,7 +112,7 @@ def get_full_report_str(
 
     Args:
         metrics: Dict produced by PerformanceMetrics.calculate_metrics().
-        trades: Raw trade list used for total PnL and hold-time statistics.
+        trades: Raw trade list used for hold-time statistics and legacy fallback.
 
     Returns:
         Fully formatted multi-line report string.
@@ -148,7 +148,9 @@ def get_full_report_str(
     lines.append(eq_sep)
     lines.append("")
 
-    total_pnl: float = sum(extract_pnls(trades or []))
+    total_pnl = metrics.get("Total PnL")
+    if total_pnl is None or pd.isna(total_pnl):
+        total_pnl = sum(extract_pnls(trades or []))
 
     # 1. PERFORMANCE
     lines.append("PERFORMANCE")

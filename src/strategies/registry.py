@@ -44,12 +44,33 @@ STRATEGIES = {
         "name": "ChannelBreakoutLongStrategy",
         "description": "Donchian channel breakout (long only)",
     },
+    "bollinger_squeeze_breakout": {
+        "class_path": (
+            "src.strategies.bollinger_squeeze_breakout:BollingerSqueezeBreakoutStrategy"
+        ),
+        "name": "BollingerSqueezeBreakoutStrategy",
+        "description": "Bollinger Band squeeze breakout",
+    },
+    "keltner_tightening_breakout": {
+        "class_path": (
+            "src.strategies.keltner_tightening_breakout:KeltnerTighteningBreakoutStrategy"
+        ),
+        "name": "KeltnerTighteningBreakoutStrategy",
+        "description": "Keltner Channel tightening breakout",
+    },
+    "diamond_breakout": {
+        "class_path": "src.strategies.diamond_breakout:DiamondBreakoutStrategy",
+        "name": "DiamondBreakoutStrategy",
+        "description": "Diamond top / bottom breakout",
+    },
 }
 
 STRATEGY_ALIASES = {
     "ict_order_block": "ict_ob",
     "rolling_fractal_pivot": "rfp_fractal",
     "channel_breakout_long": "channel_breakout",
+    "bollinger_breakout": "bollinger_squeeze_breakout",
+    "kc_breakout": "keltner_tightening_breakout",
 }
 
 

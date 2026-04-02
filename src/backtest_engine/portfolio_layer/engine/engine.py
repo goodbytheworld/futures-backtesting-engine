@@ -367,7 +367,7 @@ class PortfolioBacktestEngine:
         limit_price: Optional[float] = None,
         stop_price: Optional[float] = None,
         time_in_force: str = "DAY",
-    ) -> bool:
+    ) -> Optional[object]:
         """
         Simulates a fill via ExecutionHandler and applies it to PortfolioBook.
 
@@ -412,10 +412,12 @@ class PortfolioBacktestEngine:
             order, bar,
             execute_at_close=execute_at_close,
             effective_spread_ticks=effective_spread_ticks,
+            current_position=float(self.book.get_position(slot_id, symbol)),
         )
 
         if fill:
-            signed_qty = quantity if side == "BUY" else -quantity
+            executed_quantity = float(abs(fill.order.quantity))
+            signed_qty = executed_quantity if side == "BUY" else -executed_quantity
             self.book.apply_fill(
                 slot_id=slot_id,
                 symbol=symbol,
@@ -425,8 +427,8 @@ class PortfolioBacktestEngine:
                 multiplier=multiplier,
                 timestamp=fill.timestamp,
             )
-            return True
-        return False
+            return fill
+        return None
 
     # ── Order delta computation ────────────────────────────────────────────────
 
@@ -456,7 +458,8 @@ class PortfolioBacktestEngine:
             key = (order.slot_id, order.symbol)
             if key in replacement_keys and order.owns_resting_execution_state:
                 continue
-            pending_qty[key] = pending_qty.get(key, 0.0) + order.signed_quantity
+            if not order.reduce_only:
+                pending_qty[key] = pending_qty.get(key, 0.0) + order.signed_quantity
             if order.owns_resting_execution_state:
                 resting_template_keys.add(key)
 
@@ -696,6 +699,8 @@ class PortfolioBacktestEngine:
                 stop_price=template.requested_stop_price,
                 time_in_force=str(template.requested_time_in_force or "GTC").upper(),
                 reduce_only=bool(template.requested_reduce_only),
+                parent_order_id=None,
+                activation_policy="IMMEDIATE",
             ),
         )
 
@@ -753,19 +758,98 @@ class PortfolioBacktestEngine:
             if key in active_resting_keys
         }
 
-    def _build_protective_orders(
+    @staticmethod
+    def _same_bar_child_execution_allowed(
+        order: PendingPortfolioOrder,
+        coarse_timestamp: object,
+    ) -> bool:
+        """
+        Returns True when an attached child may execute on the current coarse bar.
+        """
+        if order.parent_order_id is None or order.activated_at is None:
+            return True
+        if pd.Timestamp(order.activated_at) != pd.Timestamp(coarse_timestamp):
+            return True
+        if str(order.activated_by_fill_phase or "OPEN").upper() != "INTRABAR":
+            return True
+        return str(order.oco_role or "").upper() == "STOP" or str(order.order_type).upper() in {"STOP", "STOP_LIMIT"}
+
+    def _attached_child_intents(
         self,
+        template: Optional[StrategySignal],
+        parent_requested_order_id: Optional[str],
+    ) -> Tuple[RequestedOrderIntent, ...]:
+        """
+        Returns reduce-only child intents attached to one parent requested order.
+        """
+        if template is None or parent_requested_order_id is None:
+            return ()
+        return tuple(
+            intent
+            for intent in self._signal_requested_orders(template)
+            if (
+                intent.parent_order_id == parent_requested_order_id
+                and bool(intent.reduce_only)
+                and str(intent.order_type).upper() != "MARKET"
+            )
+        )
+
+    def _build_attached_child_orders(
+        self,
+        parent_orders: List[PendingPortfolioOrder],
         signal_templates: Dict[Tuple[int, str], StrategySignal],
     ) -> List[PendingPortfolioOrder]:
         """
-        Builds standalone protective stop/target orders for already-open positions.
-
-        Methodology:
-            Phase 9 still avoids pending-entry child-order semantics. Protective
-            siblings are only created when a real portfolio position already
-            exists, and their quantity is pinned to the current open exposure so
-            reduce-only semantics are enforced by the OMS before execution.
+        Builds dormant child protective orders attached to pending entry orders.
         """
+        child_orders: List[PendingPortfolioOrder] = []
+
+        for parent in parent_orders:
+            template = signal_templates.get((parent.slot_id, parent.symbol))
+            for intent in self._attached_child_intents(
+                template=template,
+                parent_requested_order_id=parent.requested_order_id,
+            ):
+                order_type = str(intent.order_type).upper()
+                if not self._requested_intent_has_required_prices(intent, order_type):
+                    continue
+                child_orders.append(
+                    PendingPortfolioOrder(
+                        slot_id=parent.slot_id,
+                        symbol=parent.symbol,
+                        side=str(intent.side).upper(),
+                        quantity=abs(parent.quantity),
+                        reason=intent.reason,
+                        order_type=order_type,
+                        limit_price=intent.limit_price,
+                        stop_price=intent.stop_price,
+                        time_in_force=str(intent.time_in_force).upper(),
+                        reduce_only=True,
+                        source="SIGNAL_TEMPLATE",
+                        requested_order_id=intent.order_id,
+                        oco_group_id=intent.oco_group_id,
+                        oco_role=intent.oco_role,
+                        parent_order_id=parent.id,
+                        activation_policy=str(intent.activation_policy).upper(),
+                        activation_status="PENDING_PARENT_FILL",
+                    )
+                )
+
+        return child_orders
+
+    def _build_protective_orders(
+        self,
+        signal_templates: Dict[Tuple[int, str], StrategySignal],
+        parent_orders: Optional[List[PendingPortfolioOrder]] = None,
+    ) -> List[PendingPortfolioOrder]:
+        """
+        Builds standalone protective stop/target orders for already-open positions.
+        """
+        parent_requested_order_ids = {
+            (order.slot_id, order.symbol): order.requested_order_id
+            for order in (parent_orders or [])
+            if order.requested_order_id is not None
+        }
         protective_orders: List[PendingPortfolioOrder] = []
 
         for key, template in signal_templates.items():
@@ -775,9 +859,15 @@ class PortfolioBacktestEngine:
                 continue
 
             protective_side = "SELL" if current_qty > 0 else "BUY"
+            attached_parent_requested_order_id = parent_requested_order_ids.get(key)
             for intent in self._signal_requested_orders(template):
                 order_type = str(intent.order_type).upper()
                 if not intent.reduce_only or order_type == "MARKET":
+                    continue
+                if (
+                    attached_parent_requested_order_id is not None
+                    and intent.parent_order_id == attached_parent_requested_order_id
+                ):
                     continue
                 if str(intent.side).upper() != protective_side:
                     continue
@@ -820,10 +910,13 @@ class PortfolioBacktestEngine:
         self,
         order: PendingPortfolioOrder,
         bar: pd.Series,
+        coarse_timestamp: object,
     ) -> Optional[float]:
         """
         Returns the deterministic pre-slippage fill price without mutating state.
         """
+        if not self._same_bar_child_execution_allowed(order, coarse_timestamp):
+            return None
         temp_order = Order(
             symbol=order.symbol,
             quantity=abs(order.quantity),
@@ -840,12 +933,120 @@ class PortfolioBacktestEngine:
         handler = self._execution_handlers[order.slot_id]
         if not handler._validate_order(temp_order, order_type):
             return None
-        return handler._resolve_bar_fill_price(
+        price, _ = handler._resolve_bar_fill_details(
             order=temp_order,
             order_type=order_type,
             data_bar=bar,
             execute_at_close=False,
         )
+        if price is None:
+            return None
+        if handler._resolve_executable_quantity(
+            temp_order,
+            current_position=float(self.book.get_position(order.slot_id, order.symbol)),
+        ) <= 0:
+            return None
+        return price
+
+    def _bar_for_pending_order(
+        self,
+        order: PendingPortfolioOrder,
+        timestamp: object,
+    ) -> Optional[pd.Series]:
+        """
+        Returns the current coarse bar for one pending order, if available.
+        """
+        df = self._data_map.get((order.slot_id, order.symbol))
+        if df is None or timestamp not in df.index:
+            return None
+        bar = df.loc[timestamp]
+        self._last_bars[(order.slot_id, order.symbol)] = bar
+        return bar
+
+    def _can_attempt_pending_order(
+        self,
+        order: PendingPortfolioOrder,
+        timestamp: object,
+        session_ok: bool,
+        current_targets: Dict[Tuple[int, str], TargetPosition],
+    ) -> bool:
+        """
+        Returns True when one pending order may be attempted on this bar.
+        """
+        if self._is_expired_pending_order(order, timestamp):
+            order.status = "CANCELLED"
+            self._invalidate_signal_template_state(order, current_targets)
+            return False
+        if order.eligible_from is not None and timestamp < order.eligible_from:
+            return False
+        if self._bar_for_pending_order(order, timestamp) is None:
+            return False
+        if not order.is_priority and not session_ok:
+            return False
+        if self._effective_pending_quantity(order) <= 0:
+            order.status = "CANCELLED"
+            self._invalidate_signal_template_state(order, current_targets)
+            return False
+        return True
+
+    def _attempt_pending_fill(
+        self,
+        order: PendingPortfolioOrder,
+        timestamp: object,
+        slot_price_history: Dict[Tuple[int, str], pd.Series],
+        current_targets: Dict[Tuple[int, str], TargetPosition],
+        execute_at_close: bool = False,
+    ) -> Optional[object]:
+        """
+        Attempts one pending portfolio order and mutates its terminal state.
+        """
+        if not self._same_bar_child_execution_allowed(order, timestamp):
+            return None
+
+        bar = self._bar_for_pending_order(order, timestamp)
+        if bar is None:
+            return None
+
+        effective_qty = self._effective_pending_quantity(order)
+        if effective_qty <= 0:
+            order.status = "CANCELLED"
+            self._invalidate_signal_template_state(order, current_targets)
+            return None
+
+        spread_ticks = self._effective_spread_ticks(
+            order.slot_id,
+            order.symbol,
+            slot_price_history,
+            timestamp,
+        )
+        if order.status == "SUBMITTED":
+            order.status = "ACCEPTED"
+
+        fill = self._execute_order(
+            order.slot_id,
+            order.symbol,
+            order.side,
+            effective_qty,
+            bar,
+            execute_at_close=execute_at_close,
+            reason=order.reason,
+            effective_spread_ticks=spread_ticks,
+            reduce_only=order.reduce_only,
+            order_type=order.order_type,
+            limit_price=order.limit_price,
+            stop_price=order.stop_price,
+            time_in_force=order.time_in_force,
+        )
+        if fill is not None:
+            order.status = "FILLED"
+            if self._should_invalidate_target_after_fill(order):
+                self._invalidate_signal_template_state(order, current_targets)
+            return fill
+
+        if str(order.time_in_force).upper() == "IOC":
+            order.status = "CANCELLED"
+            self._invalidate_signal_template_state(order, current_targets)
+        return None
 
     def _intrabar_replay_slice(
         self,
@@ -922,6 +1123,7 @@ class PortfolioBacktestEngine:
         self,
         orders: List[PendingPortfolioOrder],
         bars: pd.DataFrame,
+        coarse_timestamp: object,
     ) -> Optional[PendingPortfolioOrder]:
         """
         Resolves the first determinable OCO winner from a chronological bar replay.
@@ -935,7 +1137,11 @@ class PortfolioBacktestEngine:
             fillable = [
                 order
                 for order in orders
-                if self._preview_pending_fill_price(order, replay_bar) is not None
+                if self._preview_pending_fill_price(
+                    order,
+                    replay_bar,
+                    coarse_timestamp=coarse_timestamp,
+                ) is not None
             ]
             if not fillable:
                 continue
@@ -966,7 +1172,11 @@ class PortfolioBacktestEngine:
         fillable = [
             order
             for order in orders
-            if self._preview_pending_fill_price(order, bar_map[order.id]) is not None
+            if self._preview_pending_fill_price(
+                order,
+                bar_map[order.id],
+                coarse_timestamp=timestamp,
+            ) is not None
         ]
         if not fillable:
             return None
@@ -979,7 +1189,11 @@ class PortfolioBacktestEngine:
             timestamp=timestamp,
         )
         if replay is not None:
-            replay_winner = self._resolve_oco_winner_on_bar_sequence(fillable, replay)
+            replay_winner = self._resolve_oco_winner_on_bar_sequence(
+                fillable,
+                replay,
+                coarse_timestamp=timestamp,
+            )
             if replay_winner is not None:
                 return replay_winner
 
@@ -1094,123 +1308,34 @@ class PortfolioBacktestEngine:
 
             # ── A. Fill pending orders (carry forward through gap bars) ──────────
             # Spread ticks are computed per symbol from history available at ts.
-            still_pending: List[PendingPortfolioOrder] = []
-            executable_now: List[Tuple[PendingPortfolioOrder, pd.Series, float]] = []
-            for order in order_book.active_orders():
-                if self._is_expired_pending_order(order, ts):
-                    order.status = "CANCELLED"
-                    self._invalidate_signal_template_state(order, current_targets)
-                    continue
-                if order.eligible_from is not None and ts < order.eligible_from:
-                    still_pending.append(order)
-                    continue
-                df = self._data_map.get((order.slot_id, order.symbol))
-                if df is None or ts not in df.index:
-                    still_pending.append(order)
-                    continue
-                if not order.is_priority and not session_ok:
-                    still_pending.append(order)
-                    continue
-                effective_qty = self._effective_pending_quantity(order)
-                if effective_qty <= 0:
-                    order.status = "CANCELLED"
-                    self._invalidate_signal_template_state(order, current_targets)
-                    continue
-                bar = df.loc[ts]
-                self._last_bars[(order.slot_id, order.symbol)] = bar  # keep cache current
-                executable_now.append((order, bar, effective_qty))
-
-            grouped_orders: Dict[str, List[Tuple[PendingPortfolioOrder, pd.Series, float]]] = {}
-            group_sequence: List[str] = []
-            for order, bar, effective_qty in executable_now:
-                group_id = order.oco_group_id or order.id
-                if group_id not in grouped_orders:
-                    grouped_orders[group_id] = []
-                    group_sequence.append(group_id)
-                grouped_orders[group_id].append((order, bar, effective_qty))
-
-            for group_id in group_sequence:
-                group = grouped_orders[group_id]
-                if len(group) == 1 or group[0][0].oco_group_id is None:
-                    order, bar, effective_qty = group[0]
-                    spread_ticks = self._effective_spread_ticks(
-                        order.slot_id, order.symbol, slot_price_history, ts
-                    )
-                    if order.status == "SUBMITTED":
-                        order.status = "ACCEPTED"
-                    executed = self._execute_order(
-                        order.slot_id, order.symbol, order.side, effective_qty, bar,
-                        reason=order.reason,
-                        effective_spread_ticks=spread_ticks,
-                        reduce_only=order.reduce_only,
-                        order_type=order.order_type,
-                        limit_price=order.limit_price,
-                        stop_price=order.stop_price,
-                        time_in_force=order.time_in_force,
-                    )
-                    if executed:
-                        order.status = "FILLED"
-                        if self._should_invalidate_target_after_fill(order):
-                            self._invalidate_signal_template_state(order, current_targets)
-                    else:
-                        if str(order.time_in_force).upper() == "IOC":
-                            order.status = "CANCELLED"
-                            self._invalidate_signal_template_state(order, current_targets)
-                        else:
-                            still_pending.append(order)
-                    continue
-
-                bar_map = {order.id: bar for order, bar, _ in group}
-                candidate_orders = [order for order, _, _ in group]
-                winner = self._select_oco_winner(candidate_orders, bar_map, timestamp=ts)
-                if winner is None:
-                    for order, _, _ in group:
-                        if str(order.time_in_force).upper() == "IOC":
-                            order.status = "CANCELLED"
-                            self._invalidate_signal_template_state(order, current_targets)
-                        else:
-                            still_pending.append(order)
-                    continue
-
-                winner_bar = bar_map[winner.id]
-                winner_qty = next(
-                    effective_qty
-                    for order, _, effective_qty in group
-                    if order.id == winner.id
-                )
-                spread_ticks = self._effective_spread_ticks(
-                    winner.slot_id, winner.symbol, slot_price_history, ts
-                )
-                if winner.status == "SUBMITTED":
-                    winner.status = "ACCEPTED"
-                executed = self._execute_order(
-                    winner.slot_id, winner.symbol, winner.side, winner_qty, winner_bar,
-                    reason=winner.reason,
-                    effective_spread_ticks=spread_ticks,
-                    reduce_only=winner.reduce_only,
-                    order_type=winner.order_type,
-                    limit_price=winner.limit_price,
-                    stop_price=winner.stop_price,
-                    time_in_force=winner.time_in_force,
-                )
-                if executed:
-                    winner.status = "FILLED"
-                    self._invalidate_signal_template_state(winner, current_targets)
-                    for sibling, _, _ in group:
-                        if sibling.id == winner.id:
-                            continue
-                        sibling.status = "CANCELLED"
-                        self._invalidate_signal_template_state(sibling, current_targets)
-                else:
-                    if str(winner.time_in_force).upper() == "IOC":
-                        winner.status = "CANCELLED"
-                        self._invalidate_signal_template_state(winner, current_targets)
-                    else:
-                        still_pending.append(winner)
-                    for sibling, _, _ in group:
-                        if sibling.id != winner.id:
-                            still_pending.append(sibling)
-            order_book.replace_active_orders(still_pending)
+            order_book.process_active_orders(
+                attempt_fill=lambda order: self._attempt_pending_fill(
+                    order=order,
+                    timestamp=ts,
+                    slot_price_history=slot_price_history,
+                    current_targets=current_targets,
+                ),
+                can_attempt=lambda order: self._can_attempt_pending_order(
+                    order=order,
+                    timestamp=ts,
+                    session_ok=session_ok,
+                    current_targets=current_targets,
+                ),
+                preview_fill=lambda order: self._preview_pending_fill_price(
+                    order=order,
+                    bar=bar,
+                    coarse_timestamp=ts,
+                ) if (bar := self._bar_for_pending_order(order, ts)) is not None else None,
+                select_oco_winner=lambda orders: self._select_oco_winner(
+                    orders=orders,
+                    bar_map={
+                        order.id: bar
+                        for order in orders
+                        if (bar := self._bar_for_pending_order(order, ts)) is not None
+                    },
+                    timestamp=ts,
+                ),
+            )
 
             # ── B. Mark-to-market ────────────────────────────────────────────────
             prices = {
@@ -1306,13 +1431,21 @@ class PortfolioBacktestEngine:
             target_list = list(current_targets.values())
 
             # ── H. Compute order deltas -> queue for t+1 ─────────────────────────
-            orders = self._compute_orders(
+            parent_orders = self._compute_orders(
                 target_list,
                 order_book.active_orders(),
                 signal_templates=signal_templates,
                 replacement_keys=replacement_keys,
             )
-            orders.extend(self._build_protective_orders(signal_templates))
+            attached_child_orders = self._build_attached_child_orders(
+                parent_orders=parent_orders,
+                signal_templates=signal_templates,
+            )
+            standalone_protective_orders = self._build_protective_orders(
+                signal_templates,
+                parent_orders=parent_orders,
+            )
+            orders = parent_orders + attached_child_orders + standalone_protective_orders
             next_eligible_ts = self._next_eligible_timestamp(all_timestamps, i)
             if replacement_keys:
                 order_book.cancel_where(

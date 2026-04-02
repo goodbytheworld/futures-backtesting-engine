@@ -22,8 +22,14 @@ Read these first:
 
 Read `USAGE.md` only when the task touches CLI help text, command examples, or onboarding docs.
 
-If `dev_context/` exists locally, `dev_context/CLEAN_CODE_MCP.md` is an optional internal reference.
-Do not read unrelated files in `dev_context/` unless the task explicitly requires them.
+If `dev_context/` exists locally and the task touches architecture, data
+pipelines, strategy design, optimization, risk modeling, runtime safety,
+observability, or project bootstrap work, read `dev_context/README.md` first
+and then only the relevant documents it points to.
+
+`dev_context/CLEAN_CODE_MCP.md` and `dev_context/QUANT_FRAMEWORK_MCP.md` are the
+main universal references. Use topic-specific files from `dev_context/` only
+when they match the task.
 
 ## Non-Negotiable Invariants
 

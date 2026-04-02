@@ -40,9 +40,10 @@ class RollingFractalPivotConfig:
     """
     Parameters for the rolling fractal pivot strategy.
 
-    pip_filter:
-        Minimum penetration beyond the fractal level (price units), matching
-        Pine's “minimum pip difference” intent for filtering weak spikes.
+    penetration_ticks:
+        Minimum penetration beyond the fractal level in exchange ticks.
+        This keeps the filter contract-aligned for CME futures regardless of
+        the symbol's quoted price scale.
     atr_length / atr_mult_tp / atr_mult_sl:
         Wilder EWM ATR on TR; stop and limit distances from entry close.
     ibs_buy_threshold / ibs_sell_threshold:
@@ -56,7 +57,7 @@ class RollingFractalPivotConfig:
         "both" | "long" | "short"
     """
 
-    pip_filter: float = 0.0002
+    penetration_ticks: float = 2.0
     atr_length: int = 14
     atr_mult_tp: float = 2.0
     atr_mult_sl: float = 2.0
@@ -139,6 +140,9 @@ class RollingFractalPivotStrategy(BaseStrategy):
         low = engine.data["low"].astype(float)
         close = engine.data["close"].astype(float)
         open_ = engine.data["open"].astype(float)
+        tick_size = float(
+            self.settings.get_instrument_spec(self.settings.default_symbol)["tick_size"]
+        )
 
         lb = max(3, int(cfg.lookback_bars))
 
@@ -164,7 +168,7 @@ class RollingFractalPivotStrategy(BaseStrategy):
         lo = lo_a
         hi = hi_a
 
-        pip = float(cfg.pip_filter)
+        penetration_price = tick_size * float(cfg.penetration_ticks)
 
         buy_raw = (
             in_win
@@ -173,7 +177,7 @@ class RollingFractalPivotStrategy(BaseStrategy):
             & (c > lf)
             & (o > lf)
             & (ibs > cfg.ibs_buy_threshold)
-            & ((lf - lo) >= pip)
+            & ((lf - lo) >= penetration_price)
         )
         sell_raw = (
             in_win
@@ -182,7 +186,7 @@ class RollingFractalPivotStrategy(BaseStrategy):
             & (c < hf)
             & (o < hf)
             & (ibs < cfg.ibs_sell_threshold)
-            & ((hi - hf) >= pip)
+            & ((hi - hf) >= penetration_price)
         )
         both = buy_raw & sell_raw
         long_sig = buy_raw & ~both
@@ -227,7 +231,9 @@ class RollingFractalPivotStrategy(BaseStrategy):
         n_short = int(short_sig.sum())
         print(
             f"[Rolling Fractal Pivot] Ready | lookback={lb} | "
-            f"ATR={cfg.atr_length} | long={n_long:,} short={n_short:,} signals"
+            f"ATR={cfg.atr_length} | penetration={penetration_price:g} "
+            f"({cfg.penetration_ticks:g}t default) | "
+            f"long={n_long:,} short={n_short:,} signals"
         )
 
     def on_bar(self, bar: pd.Series) -> List[Order]:
@@ -315,6 +321,7 @@ class RollingFractalPivotStrategy(BaseStrategy):
     def get_search_space(cls) -> Dict[str, Any]:
         return {
             "rfp_lookback_bars": (5, 18, 1),
+            "rfp_penetration_ticks": (1.0, 8.0, 1.0),
             "rfp_atr_length": (10, 24, 2),
             "rfp_atr_mult_tp": (1.5, 4.0, 0.5),
             "rfp_atr_mult_sl": (1.0, 3.0, 0.25),

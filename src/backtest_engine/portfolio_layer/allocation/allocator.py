@@ -20,7 +20,8 @@ Methodology (per slot, per symbol):
     7.  contracts          = round(raw_contracts)
     8.  contracts          = min(contracts, margin_capacity_contracts)
     9.  contracts          = min(contracts, max_contracts_per_slot) if cap is set
-    10. signed_qty         = contracts * signal.direction
+    10. target_qty         = contracts * signal.direction for OPEN/HOLD/REVERSE,
+                             or 0 for explicit CLOSE intent
 
 IMPORTANT - Zero Cross-Correlation Assumption:
     Slot weights are aggregated via sqrt(weight) scaling, which is correct only
@@ -45,7 +46,11 @@ import numpy as np
 import pandas as pd
 
 from ..domain.contracts import PortfolioConfig
-from ..domain.signals import StrategySignal, TargetPosition
+from ..domain.signals import (
+    BRIDGE_INTENT_CLOSE,
+    StrategySignal,
+    TargetPosition,
+)
 
 
 # Fallback annualisation factor used when the engine doesn't supply bars_per_year.
@@ -93,7 +98,8 @@ class Allocator:
             See the module docstring for the full sizing formula.
             If instrument vol cannot be estimated (insufficient history or
             zero variance), falls back to 1 contract to avoid zero allocation.
-            A zero-direction signal always produces target_qty = 0 (flat).
+            A zero-direction CLOSE signal always produces target_qty = 0
+            (flat). Other intents still size from `direction`.
 
         Args:
             signals: List of StrategySignals for this bar.
@@ -156,11 +162,25 @@ class Allocator:
             targets.append(TargetPosition(
                 slot_id=sig.slot_id,
                 symbol=sig.symbol,
-                target_qty=contracts * sig.direction,
+                target_qty=self._resolve_target_quantity(sig, contracts),
                 reason=sig.reason,
             ))
 
         return targets
+
+    @staticmethod
+    def _resolve_target_quantity(sig: StrategySignal, contracts: int) -> float:
+        """
+        Converts a sized signal into the portfolio target quantity.
+
+        Methodology:
+            Most bridge intents still size to `contracts * direction`.
+            Explicit CLOSE intent is the exception: it flattens the slot even
+            when the live position sign and raw exit order side disagree.
+        """
+        if str(sig.bridge_intent).upper() == BRIDGE_INTENT_CLOSE:
+            return 0.0
+        return float(contracts * sig.direction)
 
     # ── Private helpers ────────────────────────────────────────────────────────
 

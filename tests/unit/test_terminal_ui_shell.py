@@ -357,6 +357,34 @@ def test_equity_chart_payload_keeps_full_history_for_long_portfolio_runs() -> No
     )
 
 
+def test_single_equity_chart_long_curve_reconciles_with_strategy_when_run_finishes_flat() -> None:
+    """Single-mode closed long PnL should finish at the same value as strategy equity when flat."""
+    index = pd.to_datetime(["2024-01-01 09:30:00", "2024-01-01 10:00:00"])
+    history = pd.DataFrame({"total_value": [100_000.0, 100_020.0]}, index=index)
+    trades = pd.DataFrame(
+        {
+            "exit_time": [index[-1]],
+            "direction": ["LONG"],
+            "pnl": [20.0],
+        }
+    )
+    bundle = ResultBundle(
+        run_type="single",
+        history=history,
+        trades=trades,
+    )
+
+    payload = build_equity_chart_payload(bundle, load_terminal_runtime_context())
+    series_by_name = {
+        series["name"]: series
+        for series in payload["series"]
+        if series.get("priceScaleId") != "drawdown"
+    }
+
+    assert series_by_name["Strategy"]["points"][-1]["value"] == 20.0
+    assert series_by_name["Long"]["points"][-1]["value"] == 20.0
+
+
 # ---------------------------------------------------------------------------
 # Resize handles
 # ---------------------------------------------------------------------------

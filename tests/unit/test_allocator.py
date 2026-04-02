@@ -8,7 +8,11 @@ import numpy as np
 
 from src.backtest_engine.portfolio_layer.allocation.allocator import Allocator
 from src.backtest_engine.portfolio_layer.domain.contracts import PortfolioConfig, StrategySlot
-from src.backtest_engine.portfolio_layer.domain.signals import StrategySignal
+from src.backtest_engine.portfolio_layer.domain.signals import (
+    BRIDGE_INTENT_CLOSE,
+    BRIDGE_INTENT_REVERSE,
+    StrategySignal,
+)
 
 
 def _config(
@@ -37,8 +41,18 @@ def _config(
     )
 
 
-def _signal(direction: int = 1, symbol: str = "ES", slot_id: int = 0) -> StrategySignal:
-    return StrategySignal(slot_id=slot_id, symbol=symbol, direction=direction)
+def _signal(
+    direction: int = 1,
+    symbol: str = "ES",
+    slot_id: int = 0,
+    bridge_intent: str = "OPEN",
+) -> StrategySignal:
+    return StrategySignal(
+        slot_id=slot_id,
+        symbol=symbol,
+        direction=direction,
+        bridge_intent=bridge_intent,
+    )
 
 
 def _price_history(
@@ -64,6 +78,30 @@ class TestComputeTargets:
         hist = _price_history()
         t = alloc.compute_targets([_signal(direction=0)], 100_000.0, {"ES": 4000.0}, SPECS, hist)
         assert t[0].target_qty == 0
+
+    def test_close_intent_forces_flat_target_even_with_live_exit_signal(self):
+        alloc = Allocator(_config())
+        hist = _price_history(vol=0.0025)
+        t = alloc.compute_targets(
+            [_signal(direction=0, bridge_intent=BRIDGE_INTENT_CLOSE)],
+            5_000_000.0,
+            {"ES": 4000.0},
+            SPECS,
+            hist,
+        )
+        assert t[0].target_qty == 0
+
+    def test_reverse_intent_sizes_to_opposite_direction(self):
+        alloc = Allocator(_config())
+        hist = _price_history(vol=0.0025)
+        t = alloc.compute_targets(
+            [_signal(direction=-1, bridge_intent=BRIDGE_INTENT_REVERSE)],
+            5_000_000.0,
+            {"ES": 4000.0},
+            SPECS,
+            hist,
+        )
+        assert t[0].target_qty < 0
 
     def test_long_signal_yields_positive_qty(self):
         alloc = Allocator(_config())

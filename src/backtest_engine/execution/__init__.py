@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pandas as pd
 
+from .brackets import ACTIVATION_POLICY_IMMEDIATE
 from .cost_model import (
     estimate_order_cost,
     estimate_round_trip_cost,
@@ -32,6 +33,11 @@ class Order:
     reduce_only: bool = False
     oco_group_id: Optional[str] = None
     oco_role: Optional[str] = None
+    parent_order_id: Optional[str] = None
+    activation_policy: str = ACTIVATION_POLICY_IMMEDIATE
+    activation_status: str = "ACTIVE"
+    activated_at: Optional[object] = None
+    activated_by_fill_phase: Optional[str] = None
 
 @dataclass
 class Fill:
@@ -48,6 +54,7 @@ class Fill:
     slippage: float
     cost: float
     timestamp: datetime
+    fill_phase: str = "OPEN"
 
     @property
     def order_id(self) -> str:
@@ -60,6 +67,10 @@ class Trade:
     Represents a completed round-trip trade (Entry + Exit) for analytics scoring.
 
     Methodology:
+    `pnl` is net realized PnL after commissions using the actual executed entry
+    and exit prices. Because those executed prices already embed slippage,
+    `slippage` stays as a separate positive dollar-cost field for decomposition
+    and signal-vs-execution analytics rather than being subtracted again.
     `commission` and `slippage` are stored as positive dollar cost magnitudes for
     the completed round trip so exporters and dashboard analytics do not need to
     infer units from the execution layer.
@@ -116,6 +127,7 @@ class ExecutionHandler:
         data_bar: pd.Series,
         execute_at_close: bool = False,
         effective_spread_ticks: Optional[int] = None,
+        current_position: float = 0.0,
     ) -> Optional[Fill]:
         """
         Simulates order execution with deterministic spread and commission constraints.
@@ -149,21 +161,30 @@ class ExecutionHandler:
         if not self._validate_order(order, order_type):
             return None
 
+        executable_quantity = self._resolve_executable_quantity(
+            order=order,
+            current_position=current_position,
+        )
+        if executable_quantity <= 0:
+            order.status = "CANCELLED" if bool(order.reduce_only) else "REJECTED"
+            return None
+        order.quantity = float(executable_quantity)
+
         self._accept_order(order)
-        price = self._resolve_bar_fill_price(
+        fill_price, fill_phase = self._resolve_bar_fill_details(
             order=order,
             order_type=order_type,
             data_bar=data_bar,
             execute_at_close=execute_at_close,
         )
-        if price is None:
+        if fill_price is None:
             if str(order.time_in_force).upper() == "IOC":
                 order.status = "CANCELLED"
             return None
 
         ticks = self._resolve_spread_ticks(order_type, effective_spread_ticks)
         slippage = ticks * spec["tick_size"]
-        executed_price = price + slippage if order.side == 'BUY' else price - slippage
+        executed_price = fill_price + slippage if order.side == 'BUY' else fill_price - slippage
         commission = abs(order.quantity) * self._resolve_commission_rate(order_type)
         cost = (executed_price * order.quantity) if order.side == 'BUY' else -(executed_price * order.quantity)
         order.status = "FILLED"
@@ -174,7 +195,8 @@ class ExecutionHandler:
             commission=commission,
             slippage=slippage,
             cost=cost,
-            timestamp=data_bar.name if isinstance(data_bar.name, datetime) else order.timestamp
+            timestamp=data_bar.name if isinstance(data_bar.name, datetime) else order.timestamp,
+            fill_phase=fill_phase,
         )
         self.fills.append(fill)
         self._process_trades(fill)
@@ -211,6 +233,34 @@ class ExecutionHandler:
         if order.status in {"NEW", "SUBMITTED"}:
             order.status = "ACCEPTED"
 
+    @staticmethod
+    def _resolve_executable_quantity(order: Order, current_position: float) -> float:
+        """
+        Applies reduce-only quantity caps against the live opposing position.
+
+        Methodology:
+            The shared execution kernel still does not own the full portfolio
+            ledger, so the calling engine passes the current signed exposure for
+            the relevant symbol. Reduce-only orders are clipped to that opposing
+            quantity and become non-executable when no reducible exposure exists.
+        """
+        requested = float(abs(order.quantity))
+        if requested <= 0:
+            return 0.0
+        if not bool(order.reduce_only):
+            return requested
+
+        signed_position = float(current_position)
+        if order.side == "BUY":
+            if signed_position >= 0:
+                return 0.0
+            return min(requested, abs(signed_position))
+        if order.side == "SELL":
+            if signed_position <= 0:
+                return 0.0
+            return min(requested, abs(signed_position))
+        return 0.0
+
     def _resolve_spread_ticks(
         self,
         order_type: str,
@@ -231,21 +281,21 @@ class ExecutionHandler:
         """
         return resolve_execution_cost_profile(self.settings, order_type).commission_rate
 
-    def _resolve_bar_fill_price(
+    def _resolve_bar_fill_details(
         self,
         order: Order,
         order_type: str,
         data_bar: pd.Series,
         execute_at_close: bool,
-    ) -> Optional[float]:
+    ) -> tuple[Optional[float], str]:
         """
-        Resolves the deterministic pre-slippage fill price from a single OHLC bar.
+        Resolves the deterministic pre-slippage fill price and phase.
         """
         if execute_at_close:
             close_price = float(self._bar_value(data_bar, "close"))
             if order_type == "MARKET":
-                return close_price
-            return None
+                return close_price, "CLOSE"
+            return None, "CLOSE"
 
         open_price = float(self._bar_value(data_bar, "open"))
         high_raw = self._bar_value(data_bar, "high", open_price)
@@ -254,20 +304,21 @@ class ExecutionHandler:
         low_price = float(low_raw if low_raw is not None else open_price)
 
         if order_type == "MARKET":
-            return open_price
+            return open_price, "OPEN"
         if order_type == "LIMIT":
-            return self._resolve_limit_fill_price(order, open_price, high_price, low_price)
+            return self._resolve_limit_fill_details(order, open_price, high_price, low_price)
         if order_type == "STOP":
-            return self._resolve_stop_fill_price(order, open_price, high_price, low_price)
+            return self._resolve_stop_fill_details(order, open_price, high_price, low_price)
         if order_type == "STOP_LIMIT":
-            return self._resolve_stop_limit_fill_price(order, open_price, high_price, low_price)
-        return None
+            return self._resolve_stop_limit_fill_details(order, open_price, high_price, low_price)
+        return None, "OPEN"
 
     def preview_fill_price(
         self,
         order: Order,
         data_bar: pd.Series,
         execute_at_close: bool = False,
+        current_position: float = 0.0,
     ) -> Optional[float]:
         """
         Returns the pre-slippage fill price without mutating order state.
@@ -290,12 +341,15 @@ class ExecutionHandler:
                 return None
         if order_type not in {"MARKET", "LIMIT", "STOP", "STOP_LIMIT"}:
             return None
-        return self._resolve_bar_fill_price(
+        if self._resolve_executable_quantity(order, current_position) <= 0:
+            return None
+        price, _ = self._resolve_bar_fill_details(
             order=order,
             order_type=order_type,
             data_bar=data_bar,
             execute_at_close=execute_at_close,
         )
+        return price
 
     @staticmethod
     def _bar_value(data_bar: Any, key: str, default: Optional[float] = None) -> Optional[float]:
@@ -310,60 +364,60 @@ class ExecutionHandler:
             return default
 
     @staticmethod
-    def _resolve_limit_fill_price(
+    def _resolve_limit_fill_details(
         order: Order,
         open_price: float,
         high_price: float,
         low_price: float,
-    ) -> Optional[float]:
+    ) -> tuple[Optional[float], str]:
         """
         Resolves a gap-aware limit-order fill price from a single OHLC bar.
         """
         limit_price = float(order.limit_price)
         if order.side == "BUY":
             if open_price <= limit_price:
-                return open_price
+                return open_price, "OPEN"
             if low_price <= limit_price:
-                return limit_price
-            return None
+                return limit_price, "INTRABAR"
+            return None, "OPEN"
 
         if open_price >= limit_price:
-            return open_price
+            return open_price, "OPEN"
         if high_price >= limit_price:
-            return limit_price
-        return None
+            return limit_price, "INTRABAR"
+        return None, "OPEN"
 
     @staticmethod
-    def _resolve_stop_fill_price(
+    def _resolve_stop_fill_details(
         order: Order,
         open_price: float,
         high_price: float,
         low_price: float,
-    ) -> Optional[float]:
+    ) -> tuple[Optional[float], str]:
         """
         Resolves a gap-aware stop-order fill price from a single OHLC bar.
         """
         stop_price = float(order.stop_price)
         if order.side == "BUY":
             if open_price >= stop_price:
-                return open_price
+                return open_price, "OPEN"
             if high_price >= stop_price:
-                return stop_price
-            return None
+                return stop_price, "INTRABAR"
+            return None, "OPEN"
 
         if open_price <= stop_price:
-            return open_price
+            return open_price, "OPEN"
         if low_price <= stop_price:
-            return stop_price
-        return None
+            return stop_price, "INTRABAR"
+        return None, "OPEN"
 
-    def _resolve_stop_limit_fill_price(
+    def _resolve_stop_limit_fill_details(
         self,
         order: Order,
         open_price: float,
         high_price: float,
         low_price: float,
-    ) -> Optional[float]:
+    ) -> tuple[Optional[float], str]:
         """
         Resolves a deterministic stop-limit fill price from a single OHLC bar.
 
@@ -373,19 +427,19 @@ class ExecutionHandler:
         if order.side == "BUY":
             if open_price >= float(order.stop_price):
                 if open_price <= float(order.limit_price):
-                    return open_price
-                return None
+                    return open_price, "OPEN"
+                return None, "OPEN"
             if high_price >= float(order.stop_price) and low_price <= float(order.limit_price):
-                return float(order.limit_price)
-            return None
+                return float(order.limit_price), "INTRABAR"
+            return None, "OPEN"
 
         if open_price <= float(order.stop_price):
             if open_price >= float(order.limit_price):
-                return open_price
-            return None
+                return open_price, "OPEN"
+            return None, "OPEN"
         if low_price <= float(order.stop_price) and high_price >= float(order.limit_price):
-            return float(order.limit_price)
-        return None
+            return float(order.limit_price), "INTRABAR"
+        return None, "OPEN"
 
     def _process_trades(self, fill: Fill):
         """
@@ -429,7 +483,8 @@ class ExecutionHandler:
             spec = self.settings.get_instrument_spec(symbol)
             multiplier = spec["multiplier"]
             
-            # Calculate Base PnL honoring whether the trade entered as Long or Short
+            # Executed prices already include entry/exit slippage, so this base
+            # realized PnL is post-slippage by construction.
             if open_side == 1:
                 pnl = (fill_price - entry_price) * match_qty * multiplier
                 direction = 'LONG'
@@ -445,7 +500,10 @@ class ExecutionHandler:
             entry_slippage_per_unit = abs(open_fill.slippage) * multiplier
             exit_slippage_per_unit = abs(fill.slippage) * multiplier
             trade_slippage = (entry_slippage_per_unit + exit_slippage_per_unit) * match_qty
-            net_pnl = pnl - trade_comm - trade_slippage
+            # Keep slippage as an explicit decomposition field only. Subtracting
+            # it again here would double count execution friction because
+            # `pnl` already reflects the slipped executed prices.
+            net_pnl = pnl - trade_comm
             
             self.trades.append(Trade(
                 symbol=symbol,

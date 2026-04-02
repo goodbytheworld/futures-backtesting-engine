@@ -104,6 +104,93 @@ class WideBracketStrategy(BaseStrategy):
         return []
 
 
+class SameBarMarketBracketStrategy(BaseStrategy):
+    """Emits one parent market entry plus attached protective children."""
+
+    def __init__(self, engine) -> None:
+        super().__init__(engine)
+        self._emitted = False
+
+    def on_bar(self, bar) -> list:
+        if self._emitted:
+            return []
+        self._emitted = True
+        self._invested = False
+        self._position_side = None
+        return [
+            self.market_order("BUY", 1, reason="ENTRY"),
+            self.stop_order("SELL", 1, stop_price=95.0, reason="SL", reduce_only=True),
+            self.limit_order("SELL", 1, limit_price=110.0, reason="TP", reduce_only=True),
+        ]
+
+
+class SameBarStopEntryBracketStrategy(BaseStrategy):
+    """Emits one stop entry plus attached protective stop/target children."""
+
+    def __init__(self, engine) -> None:
+        super().__init__(engine)
+        self._emitted = False
+
+    def on_bar(self, bar) -> list:
+        if self._emitted:
+            return []
+        self._emitted = True
+        self._invested = False
+        self._position_side = None
+        return [
+            self.stop_order("BUY", 1, stop_price=101.0, reason="ENTRY", time_in_force="IOC"),
+            self.stop_order("SELL", 1, stop_price=99.0, reason="SL", reduce_only=True),
+            self.limit_order("SELL", 1, limit_price=105.0, reason="TP", reduce_only=True),
+        ]
+
+
+class EntryThenExplicitExitStrategy(BaseStrategy):
+    """Enters once, then emits an explicit opposite-side market exit."""
+
+    def __init__(self, engine) -> None:
+        super().__init__(engine)
+        self.calls = 0
+
+    def on_bar(self, bar) -> list:
+        self.calls += 1
+        if self.calls == 1:
+            self._invested = True
+            self._position_side = "LONG"
+            return [self.market_order("BUY", 1, reason="ENTRY")]
+        if self.calls == 2:
+            self._invested = False
+            self._position_side = None
+            return [self.market_order("SELL", 1, reason="EXIT")]
+        return []
+
+
+class EntryBracketThenExplicitExitStrategy(BaseStrategy):
+    """Enters, stages a wide bracket, then emits an explicit exit signal."""
+
+    def __init__(self, engine) -> None:
+        super().__init__(engine)
+        self.calls = 0
+
+    def on_bar(self, bar) -> list:
+        self.calls += 1
+        if self.calls == 1:
+            self._invested = True
+            self._position_side = "LONG"
+            return [self.market_order("BUY", 1, reason="ENTRY")]
+        if self.calls == 2:
+            self._invested = True
+            self._position_side = "LONG"
+            return [
+                self.stop_order("SELL", 1, stop_price=80.0, reason="SL", reduce_only=True),
+                self.limit_order("SELL", 1, limit_price=110.0, reason="TP", reduce_only=True),
+            ]
+        if self.calls == 3:
+            self._invested = False
+            self._position_side = None
+            return [self.market_order("SELL", 1, reason="EXIT")]
+        return []
+
+
 def test_fresh_signal_replaces_resting_limit_template() -> None:
     """A fresh templated signal must replace the older resting non-market intent."""
     index = pd.DatetimeIndex(
@@ -264,4 +351,168 @@ def test_eod_close_cancels_active_bracket_and_flattens_position() -> None:
     trades = engine._slot_trades[0]
     assert len(trades) == 1
     assert trades[0].exit_reason == "EOD_CLOSE"
+    assert engine.book.get_position(0, "ES") == 0.0
+
+
+def test_same_bar_market_entry_activates_attached_stop_on_entry_bar() -> None:
+    """A same-bar market entry must arm its protective stop immediately after fill."""
+    index = pd.DatetimeIndex(
+        [
+            datetime(2025, 1, 1, 9, 30),
+            datetime(2025, 1, 1, 10, 0),
+            datetime(2025, 1, 1, 10, 30),
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 100.0],
+            "high": [100.0, 101.0, 100.0],
+            "low": [100.0, 94.0, 100.0],
+            "close": [100.0, 95.0, 100.0],
+            "volume": [1.0, 1.0, 1.0],
+        },
+        index=index,
+    )
+
+    engine = PortfolioBacktestEngine(config=_config(SameBarMarketBracketStrategy), settings=_settings())
+    engine._data_map = {(0, "ES"): data}
+    engine.run()
+
+    fills = engine._execution_handlers[0].fills
+    assert len(fills) == 2
+    assert fills[0].order.reason == "ENTRY"
+    assert fills[1].order.reason == "SL"
+    assert engine.book.get_position(0, "ES") == 0.0
+
+
+def test_same_bar_intrabar_stop_entry_activates_stop_child_after_fill() -> None:
+    """An intrabar stop entry must still arm its protective stop on the entry bar."""
+    index = pd.DatetimeIndex(
+        [
+            datetime(2025, 1, 1, 9, 30),
+            datetime(2025, 1, 1, 10, 0),
+            datetime(2025, 1, 1, 10, 30),
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 100.0],
+            "high": [100.0, 102.0, 100.0],
+            "low": [100.0, 98.0, 100.0],
+            "close": [100.0, 100.0, 100.0],
+            "volume": [1.0, 1.0, 1.0],
+        },
+        index=index,
+    )
+
+    engine = PortfolioBacktestEngine(config=_config(SameBarStopEntryBracketStrategy), settings=_settings())
+    engine._data_map = {(0, "ES"): data}
+    engine.run()
+
+    fills = engine._execution_handlers[0].fills
+    assert len(fills) == 2
+    assert fills[0].order.reason == "ENTRY"
+    assert fills[0].fill_phase == "INTRABAR"
+    assert fills[1].order.reason == "SL"
+    assert engine.book.get_position(0, "ES") == 0.0
+
+
+def test_unfilled_stop_entry_does_not_activate_same_bar_protective_child() -> None:
+    """Protective children must stay dormant if the parent stop entry never fills."""
+    index = pd.DatetimeIndex(
+        [
+            datetime(2025, 1, 1, 9, 30),
+            datetime(2025, 1, 1, 10, 0),
+            datetime(2025, 1, 1, 10, 30),
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 100.0],
+            "high": [100.0, 100.0, 100.0],
+            "low": [100.0, 94.0, 100.0],
+            "close": [100.0, 95.0, 100.0],
+            "volume": [1.0, 1.0, 1.0],
+        },
+        index=index,
+    )
+
+    engine = PortfolioBacktestEngine(config=_config(SameBarStopEntryBracketStrategy), settings=_settings())
+    engine._data_map = {(0, "ES"): data}
+    engine.run()
+
+    assert engine._execution_handlers[0].fills == []
+    assert engine._slot_trades[0] == []
+    assert engine.book.get_position(0, "ES") == 0.0
+
+
+def test_explicit_opposite_side_exit_flattens_live_position() -> None:
+    """A live-position opposite-side non-reduce-only order must flatten the slot."""
+    index = pd.DatetimeIndex(
+        [
+            datetime(2025, 1, 1, 9, 30),
+            datetime(2025, 1, 1, 10, 0),
+            datetime(2025, 1, 1, 10, 30),
+            datetime(2025, 1, 1, 11, 0),
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 100.0, 100.0],
+            "high": [100.0, 101.0, 100.0, 100.0],
+            "low": [100.0, 99.0, 100.0, 100.0],
+            "close": [100.0, 100.0, 100.0, 100.0],
+            "volume": [1.0, 1.0, 1.0, 1.0],
+        },
+        index=index,
+    )
+
+    engine = PortfolioBacktestEngine(config=_config(EntryThenExplicitExitStrategy), settings=_settings())
+    engine._data_map = {(0, "ES"): data}
+    engine.run()
+
+    fills = engine._execution_handlers[0].fills
+    assert len(fills) == 2
+    assert fills[0].order.reason == "ENTRY"
+    assert fills[1].order.reason == "EXIT"
+    assert engine.book.get_position(0, "ES") == 0.0
+
+
+def test_explicit_exit_replaces_resting_bracket_and_flattens_position() -> None:
+    """An explicit exit must cancel active bracket orders and close the live position."""
+    index = pd.DatetimeIndex(
+        [
+            datetime(2025, 1, 1, 9, 30),
+            datetime(2025, 1, 1, 10, 0),
+            datetime(2025, 1, 1, 10, 30),
+            datetime(2025, 1, 1, 11, 0),
+            datetime(2025, 1, 1, 11, 30),
+        ]
+    )
+    data = pd.DataFrame(
+        {
+            "open": [100.0, 100.0, 100.0, 100.0, 100.0],
+            "high": [100.0, 101.0, 101.0, 100.0, 100.0],
+            "low": [100.0, 99.0, 99.0, 100.0, 100.0],
+            "close": [100.0, 100.0, 100.0, 100.0, 100.0],
+            "volume": [1.0, 1.0, 1.0, 1.0, 1.0],
+        },
+        index=index,
+    )
+
+    engine = PortfolioBacktestEngine(
+        config=_config(EntryBracketThenExplicitExitStrategy),
+        settings=_settings(),
+    )
+    engine._data_map = {(0, "ES"): data}
+    engine.run()
+
+    fills = engine._execution_handlers[0].fills
+    trades = engine._slot_trades[0]
+
+    assert len(fills) == 2
+    assert fills[0].order.reason == "ENTRY"
+    assert fills[1].order.reason == "EXIT"
+    assert len(trades) == 1
+    assert trades[0].exit_reason == "EXIT"
     assert engine.book.get_position(0, "ES") == 0.0
