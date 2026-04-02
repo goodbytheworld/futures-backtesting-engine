@@ -38,8 +38,8 @@ results/
 .DS_Store
 Thumbs.db
 
-# Local data / artifacts (root data/ = IB cache, optimization dumps — not src/data/ Python package)
-/data/
+# Local data / artifacts
+data/
 *.db
 *.sqlite
 *.sqlite3
